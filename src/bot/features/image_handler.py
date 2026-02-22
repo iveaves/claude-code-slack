@@ -91,9 +91,7 @@ class ImageHandler:
         """Process image — accepts either a Slack file_info dict or raw bytes."""
         if isinstance(photo_or_file_info, dict):
             # This path requires a bot token, which should be passed separately
-            raise ValueError(
-                "Use process_image_from_slack() for Slack file_info dicts"
-            )
+            raise ValueError("Use process_image_from_slack() for Slack file_info dicts")
         # Fallback for raw bytes
         image_bytes = photo_or_file_info
         if isinstance(image_bytes, (bytearray, memoryview)):

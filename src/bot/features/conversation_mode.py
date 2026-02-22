@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import structlog
+
 from ...claude.sdk_integration import ClaudeResponse
 
 logger = structlog.get_logger()
@@ -268,34 +269,38 @@ class ConversationEnhancer:
         suggestion_elements = []
         for suggestion in suggestions[:4]:
             suggestion_hash = str(hash(suggestion) % 1000000)
-            suggestion_elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": suggestion},
-                "action_id": f"followup_{suggestion_hash}",
-                "value": suggestion,
-            })
+            suggestion_elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": suggestion},
+                    "action_id": f"followup_{suggestion_hash}",
+                    "value": suggestion,
+                }
+            )
 
         if suggestion_elements:
             blocks.append({"type": "actions", "elements": suggestion_elements})
 
         # Add control buttons
-        blocks.append({
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Continue Coding"},
-                    "action_id": "conversation_continue",
-                    "style": "primary",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "End Session"},
-                    "action_id": "conversation_end",
-                    "style": "danger",
-                },
-            ],
-        })
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Continue Coding"},
+                        "action_id": "conversation_continue",
+                        "style": "primary",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "End Session"},
+                        "action_id": "conversation_end",
+                        "style": "danger",
+                    },
+                ],
+            }
+        )
 
         return blocks
 
@@ -340,15 +345,11 @@ class ConversationEnhancer:
         """Format response with follow-up suggestions."""
         content = response.content
         if len(content) > max_content_length:
-            content = (
-                content[:max_content_length] + "\n\n... _(response truncated)_"
-            )
+            content = content[:max_content_length] + "\n\n... _(response truncated)_"
 
         # Add session info if this is a new session
         if context.conversation_turn == 1 and response.session_id:
-            session_info = (
-                f"\n\n*Session:* `{response.session_id[:8]}...`"
-            )
+            session_info = f"\n\n*Session:* `{response.session_id[:8]}...`"
             content += session_info
 
         # Add cost info if significant

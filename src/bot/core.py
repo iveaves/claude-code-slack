@@ -12,8 +12,8 @@ import asyncio
 from typing import Any, Callable, Dict, Optional
 
 import structlog
-from slack_bolt.app.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+from slack_bolt.app.async_app import AsyncApp
 
 from ..config.settings import Settings
 from ..exceptions import ClaudeCodeSlackError

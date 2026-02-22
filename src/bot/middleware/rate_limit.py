@@ -103,8 +103,16 @@ def estimate_message_cost(body: dict, event: Any) -> float:
 
     # Check for complex operations keywords
     complex_keywords = [
-        "analyze", "generate", "create", "build", "compile",
-        "test", "debug", "refactor", "optimize", "explain",
+        "analyze",
+        "generate",
+        "create",
+        "build",
+        "compile",
+        "test",
+        "debug",
+        "refactor",
+        "optimize",
+        "explain",
     ]
 
     if any(keyword in message_text.lower() for keyword in complex_keywords):

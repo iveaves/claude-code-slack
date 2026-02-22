@@ -99,8 +99,7 @@ def load_project_registry(
             absolute_path.relative_to(approved_root)
         except ValueError as e:
             raise ValueError(
-                f"Project '{slug}' path outside approved "
-                f"directory: {rel_path_raw}"
+                f"Project '{slug}' path outside approved " f"directory: {rel_path_raw}"
             ) from e
 
         # Only validate path exists for enabled projects

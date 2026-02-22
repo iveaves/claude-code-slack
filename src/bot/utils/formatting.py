@@ -61,11 +61,7 @@ class ResponseFormatter:
         if messages and self.settings.enable_quick_actions:
             messages[-1].blocks = self._get_contextual_keyboard(context)
 
-        return (
-            messages
-            if messages
-            else [FormattedMessage("_(No content to display)_")]
-        )
+        return messages if messages else [FormattedMessage("_(No content to display)_")]
 
     def _should_use_semantic_chunking(self, text: str) -> bool:
         """Determine if semantic chunking is needed."""
@@ -107,14 +103,18 @@ class ResponseFormatter:
         self, message: str, title: str = "Success"
     ) -> FormattedMessage:
         """Format success message with appropriate styling."""
-        text = f":white_check_mark: *{escape_mrkdwn(title)}*\n\n{escape_mrkdwn(message)}"
+        text = (
+            f":white_check_mark: *{escape_mrkdwn(title)}*\n\n{escape_mrkdwn(message)}"
+        )
         return FormattedMessage(text)
 
     def format_info_message(
         self, message: str, title: str = "Info"
     ) -> FormattedMessage:
         """Format info message with appropriate styling."""
-        text = f":information_source: *{escape_mrkdwn(title)}*\n\n{escape_mrkdwn(message)}"
+        text = (
+            f":information_source: *{escape_mrkdwn(title)}*\n\n{escape_mrkdwn(message)}"
+        )
         return FormattedMessage(text)
 
     def format_code_output(
@@ -131,8 +131,7 @@ class ResponseFormatter:
         # Check if the code block is too long
         if len(output) > self.max_code_block_length:
             output = (
-                output[: self.max_code_block_length - 100]
-                + "\n... (output truncated)"
+                output[: self.max_code_block_length - 100] + "\n... (output truncated)"
             )
 
         if language:
@@ -402,9 +401,7 @@ class ResponseFormatter:
         # Split if still too long
         return self._split_message(text)
 
-    def _get_contextual_keyboard(
-        self, context: Optional[dict]
-    ) -> Optional[List[dict]]:
+    def _get_contextual_keyboard(self, context: Optional[dict]) -> Optional[List[dict]]:
         """Get context-aware quick action keyboard as Block Kit actions."""
         if not context:
             return self._get_quick_actions_keyboard()
@@ -413,42 +410,55 @@ class ResponseFormatter:
 
         # Add context-specific buttons
         if context.get("has_code"):
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":floppy_disk: Save Code"},
-                "action_id": "save_code",
-                "value": "save_code",
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":floppy_disk: Save Code"},
+                    "action_id": "save_code",
+                    "value": "save_code",
+                }
+            )
 
         if context.get("has_file_operations"):
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":file_folder: Show Files"},
-                "action_id": "show_files",
-                "value": "show_files",
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":file_folder: Show Files"},
+                    "action_id": "show_files",
+                    "value": "show_files",
+                }
+            )
 
         if context.get("has_errors"):
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":wrench: Debug"},
-                "action_id": "debug",
-                "value": "debug",
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":wrench: Debug"},
+                    "action_id": "debug",
+                    "value": "debug",
+                }
+            )
 
         # Add default actions
-        elements.append({
-            "type": "button",
-            "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Continue"},
-            "action_id": "continue",
-            "value": "continue",
-        })
-        elements.append({
-            "type": "button",
-            "text": {"type": "plain_text", "text": ":bulb: Explain"},
-            "action_id": "explain",
-            "value": "explain",
-        })
+        elements.append(
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": ":arrows_counterclockwise: Continue",
+                },
+                "action_id": "continue",
+                "value": "continue",
+            }
+        )
+        elements.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":bulb: Explain"},
+                "action_id": "explain",
+                "value": "explain",
+            }
+        )
 
         if not elements:
             return None
@@ -605,7 +615,10 @@ class ResponseFormatter:
                     },
                     {
                         "type": "button",
-                        "text": {"type": "plain_text", "text": ":bar_chart: Git Status"},
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":bar_chart: Git Status",
+                        },
                         "action_id": "quick_git_status",
                         "value": "git_status",
                     },
@@ -623,7 +636,10 @@ class ResponseFormatter:
                 "elements": [
                     {
                         "type": "button",
-                        "text": {"type": "plain_text", "text": ":white_check_mark: Yes"},
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":white_check_mark: Yes",
+                        },
                         "action_id": f"confirm_{confirm_data}",
                         "value": confirm_data,
                         "style": "primary",
@@ -651,12 +667,14 @@ class ResponseFormatter:
         for text, callback_data in options:
             # Sanitize callback_data into a valid action_id (alphanumeric + underscores)
             action_id = re.sub(r"[^a-zA-Z0-9_]", "_", callback_data)
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": text},
-                "action_id": action_id,
-                "value": callback_data,
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": text},
+                    "action_id": action_id,
+                    "value": callback_data,
+                }
+            )
 
             # Slack allows up to 25 elements per actions block, but
             # for visual clarity we group in rows of 2 (matching the
@@ -690,7 +708,18 @@ class ProgressIndicator:
     @staticmethod
     def create_spinner(step: int) -> str:
         """Create a spinning indicator."""
-        spinners = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
+        spinners = [
+            "\u280b",
+            "\u2819",
+            "\u2839",
+            "\u2838",
+            "\u283c",
+            "\u2834",
+            "\u2826",
+            "\u2827",
+            "\u2807",
+            "\u280f",
+        ]
         return spinners[step % len(spinners)]
 
     @staticmethod

@@ -215,9 +215,7 @@ class QuickActionManager:
                 return False
         return True
 
-    def create_blocks(
-        self, actions: List[QuickAction], columns: int = 3
-    ) -> List[dict]:
+    def create_blocks(self, actions: List[QuickAction], columns: int = 3) -> List[dict]:
         """Create Block Kit action blocks for quick actions.
 
         Args:

@@ -119,8 +119,15 @@ class MessageOrchestrator:
         """
 
         async def wrapped(
-            ack=None, say=None, event=None, command=None, body=None,
-            action=None, client=None, context=None, respond=None,
+            ack=None,
+            say=None,
+            event=None,
+            command=None,
+            body=None,
+            action=None,
+            client=None,
+            context=None,
+            respond=None,
             **kwargs: Any,
         ) -> None:
             if context is None:
@@ -147,9 +154,7 @@ class MessageOrchestrator:
             should_enforce = self.settings.enable_project_channels
 
             if should_enforce and not is_start_bypass:
-                allowed = await self._apply_channel_routing_context(
-                    channel_id, context
-                )
+                allowed = await self._apply_channel_routing_context(channel_id, context)
                 if not allowed:
                     logger.warning(
                         "Channel routing rejected",
@@ -223,9 +228,7 @@ class MessageOrchestrator:
         }
         return True
 
-    def _persist_channel_state(
-        self, channel_id: str, context: Dict[str, Any]
-    ) -> None:
+    def _persist_channel_state(self, channel_id: str, context: Dict[str, Any]) -> None:
         """Persist compatibility keys back into per-channel state."""
         channel_context = context.get("_channel_context")
         if not channel_context:
@@ -295,7 +298,7 @@ class MessageOrchestrator:
             if not action_id.startswith("ask_user_"):
                 return
 
-            parts = action_id[len("ask_user_"):].rsplit("_", 1)
+            parts = action_id[len("ask_user_") :].rsplit("_", 1)
             if len(parts) != 2:
                 return
 
@@ -308,7 +311,9 @@ class MessageOrchestrator:
             try:
                 msg = body.get("message", {})
                 msg_ts = msg.get("ts")
-                channel_id = body.get("channel", {}).get("id") or body.get("container", {}).get("channel_id", "")
+                channel_id = body.get("channel", {}).get("id") or body.get(
+                    "container", {}
+                ).get("channel_id", "")
                 if msg_ts and channel_id:
                     await client.chat_update(
                         channel=channel_id,
@@ -553,16 +558,20 @@ class MessageOrchestrator:
 
                 # Header block
                 if header:
-                    blocks.append({
-                        "type": "header",
-                        "text": {"type": "plain_text", "text": header},
-                    })
+                    blocks.append(
+                        {
+                            "type": "header",
+                            "text": {"type": "plain_text", "text": header},
+                        }
+                    )
 
                 # Question text
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": question_text},
-                })
+                blocks.append(
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": question_text},
+                    }
+                )
 
                 blocks.append({"type": "divider"})
 
@@ -588,34 +597,46 @@ class MessageOrchestrator:
 
                             button: Dict[str, Any] = {
                                 "type": "button",
-                                "text": {"type": "plain_text", "text": f"Select: {label}"[:75]},
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": f"Select: {label}"[:75],
+                                },
                                 "action_id": f"ask_user_{interaction_key}_{i}",
                                 "value": label,
                             }
                             if i == 0:
                                 button["style"] = "primary"
 
-                            blocks.append({
-                                "type": "section",
-                                "text": {"type": "mrkdwn", "text": option_text[:3000]},
-                                "accessory": button,
-                            })
+                            blocks.append(
+                                {
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": option_text[:3000],
+                                    },
+                                    "accessory": button,
+                                }
+                            )
                         else:
                             # No description — just collect as a plain button
-                            elements.append({
-                                "type": "button",
-                                "text": {"type": "plain_text", "text": label[:75]},
-                                "action_id": f"ask_user_{interaction_key}_{i}",
-                                "value": label,
-                            })
+                            elements.append(
+                                {
+                                    "type": "button",
+                                    "text": {"type": "plain_text", "text": label[:75]},
+                                    "action_id": f"ask_user_{interaction_key}_{i}",
+                                    "value": label,
+                                }
+                            )
 
                     # If we have leftover plain buttons (no descriptions), render as actions block
                     if elements:
                         for j in range(0, len(elements), 5):
-                            blocks.append({
-                                "type": "actions",
-                                "elements": elements[j:j + 5],
-                            })
+                            blocks.append(
+                                {
+                                    "type": "actions",
+                                    "elements": elements[j : j + 5],
+                                }
+                            )
 
                 blocks.append({"type": "divider"})
 
@@ -635,7 +656,9 @@ class MessageOrchestrator:
             try:
                 await asyncio.wait_for(wait_event.wait(), timeout=300)
             except asyncio.TimeoutError:
-                logger.warning("AskUserQuestion timed out", channel=channel, user_id=user_id)
+                logger.warning(
+                    "AskUserQuestion timed out", channel=channel, user_id=user_id
+                )
                 del self._pending_questions[interaction_key]
                 return {}
 
@@ -659,7 +682,7 @@ class MessageOrchestrator:
             return
 
         # Extract interaction key (everything between "ask_user_" and the last "_N")
-        parts = action_id[len("ask_user_"):].rsplit("_", 1)
+        parts = action_id[len("ask_user_") :].rsplit("_", 1)
         if len(parts) != 2:
             return
 
@@ -681,7 +704,13 @@ class MessageOrchestrator:
     # --- Agentic handlers ---
 
     async def agentic_start(
-        self, ack: Callable, say: Callable, command: Dict[str, Any], client: AsyncWebClient, context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        client: AsyncWebClient,
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Brief welcome, no buttons."""
         await ack()
@@ -711,7 +740,12 @@ class MessageOrchestrator:
         )
 
     async def agentic_new(
-        self, ack: Callable, say: Callable, command: Dict[str, Any], context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Reset session, one-line confirmation."""
         await ack()
@@ -723,7 +757,12 @@ class MessageOrchestrator:
         await say("Session reset. What's next?")
 
     async def agentic_status(
-        self, ack: Callable, say: Callable, command: Dict[str, Any], context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Compact one-line status, no buttons."""
         await ack()
@@ -750,9 +789,7 @@ class MessageOrchestrator:
             except Exception:
                 pass
 
-        await say(
-            f":file_folder: {dir_display} - Session: {session_status}{cost_str}"
-        )
+        await say(f":file_folder: {dir_display} - Session: {session_status}{cost_str}")
 
     def _get_verbose_level(self, user_state: Dict[str, Any]) -> int:
         """Return effective verbose level: per-user override or global default."""
@@ -762,7 +799,12 @@ class MessageOrchestrator:
         return self.settings.verbose_level
 
     async def agentic_verbose(
-        self, ack: Callable, say: Callable, command: Dict[str, Any], context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Set output verbosity: /verbose [0|1|2]."""
         await ack()
@@ -899,7 +941,9 @@ class MessageOrchestrator:
                 if text and verbose_level >= 1:
                     first_line = text.split("\n", 1)[0].strip()
                     if first_line:
-                        tool_log.append({"kind": "thinking", "detail": first_line[:120]})
+                        tool_log.append(
+                            {"kind": "thinking", "detail": first_line[:120]}
+                        )
 
             # Capture assistant text (reasoning / commentary)
             if update_obj.type == "assistant" and update_obj.content:
@@ -939,7 +983,11 @@ class MessageOrchestrator:
         """
         # Resolve channel to project/working directory
         user_state = self._get_user_state(user_id)
-        context: Dict[str, Any] = {"user_state": user_state, "deps": self.deps, "settings": self.settings}
+        context: Dict[str, Any] = {
+            "user_state": user_state,
+            "deps": self.deps,
+            "settings": self.settings,
+        }
 
         manager = self.deps.get("project_channels_manager")
         if manager:
@@ -957,7 +1005,9 @@ class MessageOrchestrator:
                 user_state["current_directory"] = current_dir
                 user_state["claude_session_id"] = state.get("claude_session_id")
 
-        current_dir = user_state.get("current_directory", self.settings.approved_directory)
+        current_dir = user_state.get(
+            "current_directory", self.settings.approved_directory
+        )
         session_id = user_state.get("claude_session_id")
 
         claude_integration = self.deps.get("claude_integration")
@@ -979,8 +1029,12 @@ class MessageOrchestrator:
 
         try:
             ask_user_cb = self._make_ask_user_callback(channel_id, user_id, client)
-            scheduler_cb = self._make_scheduler_callback(channel_id, user_id, working_directory=current_dir)
-            file_upload_cb = self._make_file_upload_callback(channel_id, user_id, client)
+            scheduler_cb = self._make_scheduler_callback(
+                channel_id, user_id, working_directory=current_dir
+            )
+            file_upload_cb = self._make_file_upload_callback(
+                channel_id, user_id, client
+            )
 
             claude_response = await claude_integration.run_command(
                 prompt=prompt,
@@ -1006,7 +1060,9 @@ class MessageOrchestrator:
             from .utils.formatting import ResponseFormatter
 
             formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(claude_response.content)
+            formatted_messages = formatter.format_claude_response(
+                claude_response.content
+            )
 
             # Delete progress message
             try:
@@ -1073,12 +1129,19 @@ class MessageOrchestrator:
                 saved.append(str(dest))
                 logger.info("Downloaded Slack image", filename=name, path=str(dest))
             except Exception as e:
-                logger.warning("Failed to download Slack image", filename=name, error=str(e))
+                logger.warning(
+                    "Failed to download Slack image", filename=name, error=str(e)
+                )
 
         return saved
 
     async def agentic_text(
-        self, event: Dict[str, Any], say: Callable, client: AsyncWebClient, context: Dict[str, Any], **kwargs: Any
+        self,
+        event: Dict[str, Any],
+        say: Callable,
+        client: AsyncWebClient,
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Direct Claude passthrough. Simple progress. No suggestions."""
         # Ignore bot messages, message_changed events, etc.
@@ -1101,11 +1164,12 @@ class MessageOrchestrator:
             image_paths = await self._download_slack_images(files, client)
             if image_paths:
                 image_refs = "\n".join(
-                    f"- `{p}` (use Read tool to view this image)"
-                    for p in image_paths
+                    f"- `{p}` (use Read tool to view this image)" for p in image_paths
                 )
                 image_prompt = f"\n\nThe user attached these images:\n{image_refs}"
-                message_text = (message_text or "Please analyze these images.") + image_prompt
+                message_text = (
+                    message_text or "Please analyze these images."
+                ) + image_prompt
 
         user_state = context.get("user_state", {})
 
@@ -1159,7 +1223,9 @@ class MessageOrchestrator:
         try:
             # Create interactive callbacks for Slack
             ask_user_cb = self._make_ask_user_callback(channel, user_id, client)
-            scheduler_cb = self._make_scheduler_callback(channel, user_id, working_directory=current_dir)
+            scheduler_cb = self._make_scheduler_callback(
+                channel, user_id, working_directory=current_dir
+            )
             file_upload_cb = self._make_file_upload_callback(channel, user_id, client)
 
             claude_response = await claude_integration.run_command(
@@ -1257,7 +1323,12 @@ class MessageOrchestrator:
             )
 
     async def agentic_file(
-        self, event: Dict[str, Any], say: Callable, client: AsyncWebClient, context: Dict[str, Any], **kwargs: Any
+        self,
+        event: Dict[str, Any],
+        say: Callable,
+        client: AsyncWebClient,
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Process file upload -> Claude, minimal chrome."""
         user_id = event.get("user_id") or event.get("user", "")
@@ -1296,9 +1367,7 @@ class MessageOrchestrator:
         # Size check
         max_size = 10 * 1024 * 1024
         if file_size > max_size:
-            await say(
-                f"File too large ({file_size / 1024 / 1024:.1f}MB). Max: 10MB."
-            )
+            await say(f"File too large ({file_size / 1024 / 1024:.1f}MB). Max: 10MB.")
             return
 
         # Post progress message
@@ -1375,7 +1444,9 @@ class MessageOrchestrator:
         try:
             # Create interactive callbacks (same as agentic_text)
             ask_user_cb = self._make_ask_user_callback(channel, user_id, client)
-            scheduler_cb = self._make_scheduler_callback(channel, user_id, working_directory=current_dir)
+            scheduler_cb = self._make_scheduler_callback(
+                channel, user_id, working_directory=current_dir
+            )
             file_upload_cb = self._make_file_upload_callback(channel, user_id, client)
 
             claude_response = await claude_integration.run_command(
@@ -1430,7 +1501,13 @@ class MessageOrchestrator:
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
 
     async def agentic_repo(
-        self, ack: Callable, say: Callable, command: Dict[str, Any], client: AsyncWebClient, context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        client: AsyncWebClient,
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """List repos in workspace or switch to one.
 
@@ -1450,9 +1527,7 @@ class MessageOrchestrator:
             target_name = args[0]
             target_path = base / target_name
             if not target_path.is_dir():
-                await say(
-                    f"Directory not found: `{escape_mrkdwn(target_name)}`"
-                )
+                await say(f"Directory not found: `{escape_mrkdwn(target_name)}`")
                 return
 
             user_state["current_directory"] = target_path
@@ -1542,7 +1617,13 @@ class MessageOrchestrator:
         )
 
     async def agentic_sync_channels(
-        self, ack: Callable, say: Callable, command: Dict[str, Any], client: AsyncWebClient, context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        client: AsyncWebClient,
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Sync project channels: /sync_channels."""
         await ack()
@@ -1565,7 +1646,14 @@ class MessageOrchestrator:
             await say(f"Channel sync failed: {escape_mrkdwn(str(e))}")
 
     async def _agentic_callback(
-        self, ack: Callable, body: Dict[str, Any], say: Callable, action: Dict[str, Any], client: AsyncWebClient, context: Dict[str, Any], **kwargs: Any
+        self,
+        ack: Callable,
+        body: Dict[str, Any],
+        say: Callable,
+        action: Dict[str, Any],
+        client: AsyncWebClient,
+        context: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """Handle cd_ actions -- switch directory and resume session if available."""
         await ack()

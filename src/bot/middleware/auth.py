@@ -93,9 +93,7 @@ async def slack_auth_middleware(
         return
 
 
-async def require_auth(
-    body: dict, event: Any, context: dict, next: Callable
-) -> None:
+async def require_auth(body: dict, event: Any, context: dict, next: Callable) -> None:
     """Stricter middleware that only allows authenticated users."""
     user_id = _extract_user_id(body, event)
     deps = context.get("deps", {})
@@ -108,9 +106,7 @@ async def require_auth(
     await next()
 
 
-async def admin_required(
-    body: dict, event: Any, context: dict, next: Callable
-) -> None:
+async def admin_required(body: dict, event: Any, context: dict, next: Callable) -> None:
     """Middleware that requires admin privileges."""
     user_id = _extract_user_id(body, event)
     deps = context.get("deps", {})

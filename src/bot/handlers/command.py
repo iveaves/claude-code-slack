@@ -62,10 +62,7 @@ async def start_command(ack, say, command, client, context) -> None:
             )
             return
 
-    if (
-        settings.enable_project_threads
-        and settings.project_threads_mode == "private"
-    ):
+    if settings.enable_project_threads and settings.project_threads_mode == "private":
         if manager is None:
             await say(
                 ":x: *Project channel mode is misconfigured*\n\n"
@@ -135,7 +132,10 @@ async def start_command(ack, say, command, client, context) -> None:
             "elements": [
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": ":file_folder: Show Projects"},
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":file_folder: Show Projects",
+                    },
                     "action_id": "action:show_projects",
                     "value": "show_projects",
                 },
@@ -384,7 +384,10 @@ async def new_session(ack, say, command, client, context) -> None:
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": ":file_folder: Change Project"},
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":file_folder: Change Project",
+                    },
                     "action_id": "action:show_projects",
                     "value": "show_projects",
                 },
@@ -518,7 +521,10 @@ async def continue_session(ack, say, command, client, context) -> None:
                         },
                         {
                             "type": "button",
-                            "text": {"type": "plain_text", "text": ":bar_chart: Status"},
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":bar_chart: Status",
+                            },
                             "action_id": "action:status",
                             "value": "status",
                         },
@@ -621,35 +627,42 @@ async def list_files(ack, say, command, client, context) -> None:
         # Add navigation buttons if not at root
         elements = []
         if current_dir != settings.approved_directory:
-            elements.extend([
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": ":arrow_up: Go Up"},
-                    "action_id": "cd:..",
-                    "value": "..",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": ":house: Go to Root"},
-                    "action_id": "cd:/",
-                    "value": "/",
-                },
-            ])
+            elements.extend(
+                [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":arrow_up: Go Up"},
+                        "action_id": "cd:..",
+                        "value": "..",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":house: Go to Root"},
+                        "action_id": "cd:/",
+                        "value": "/",
+                    },
+                ]
+            )
 
-        elements.extend([
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
-                "action_id": "action:refresh_ls",
-                "value": "refresh_ls",
-            },
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":file_folder: Projects"},
-                "action_id": "action:show_projects",
-                "value": "show_projects",
-            },
-        ])
+        elements.extend(
+            [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":arrows_counterclockwise: Refresh",
+                    },
+                    "action_id": "action:refresh_ls",
+                    "value": "refresh_ls",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":file_folder: Projects"},
+                    "action_id": "action:show_projects",
+                    "value": "show_projects",
+                },
+            ]
+        )
 
         blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": message}},
@@ -743,15 +756,11 @@ async def change_directory(ack, say, command, client, context) -> None:
 
         # Check if directory exists and is actually a directory
         if not resolved_path.exists():
-            await say(
-                f":x: *Directory Not Found*\n\n`{target_path}` does not exist."
-            )
+            await say(f":x: *Directory Not Found*\n\n`{target_path}` does not exist.")
             return
 
         if not resolved_path.is_dir():
-            await say(
-                f":x: *Not a Directory*\n\n`{target_path}` is not a directory."
-            )
+            await say(f":x: *Not a Directory*\n\n`{target_path}` is not a directory.")
             return
 
         # Update current directory in user state
@@ -916,20 +925,25 @@ async def show_projects(ack, say, command, client, context) -> None:
             )
 
         # Add navigation buttons
-        elements.extend([
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":house: Go to Root"},
-                "action_id": "cd:/",
-                "value": "/",
-            },
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
-                "action_id": "action:show_projects",
-                "value": "show_projects",
-            },
-        ])
+        elements.extend(
+            [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":house: Go to Root"},
+                    "action_id": "cd:/",
+                    "value": "/",
+                },
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":arrows_counterclockwise: Refresh",
+                    },
+                    "action_id": "action:show_projects",
+                    "value": "show_projects",
+                },
+            ]
+        )
 
         project_list = "\n".join([f"- `{project}/`" for project in projects])
 
@@ -1026,20 +1040,25 @@ async def session_status(ack, say, command, client, context) -> None:
     # Add action buttons
     elements = []
     if claude_session_id:
-        elements.extend([
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Continue"},
-                "action_id": "action:continue",
-                "value": "continue",
-            },
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": ":new: New Session"},
-                "action_id": "action:new_session",
-                "value": "new_session",
-            },
-        ])
+        elements.extend(
+            [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":arrows_counterclockwise: Continue",
+                    },
+                    "action_id": "action:continue",
+                    "value": "continue",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":new: New Session"},
+                    "action_id": "action:new_session",
+                    "value": "new_session",
+                },
+            ]
+        )
     else:
         elements.append(
             {
@@ -1050,20 +1069,25 @@ async def session_status(ack, say, command, client, context) -> None:
             }
         )
 
-    elements.extend([
-        {
-            "type": "button",
-            "text": {"type": "plain_text", "text": ":outbox_tray: Export"},
-            "action_id": "action:export",
-            "value": "export",
-        },
-        {
-            "type": "button",
-            "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
-            "action_id": "action:refresh_status",
-            "value": "refresh_status",
-        },
-    ])
+    elements.extend(
+        [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":outbox_tray: Export"},
+                "action_id": "action:export",
+                "value": "export",
+            },
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": ":arrows_counterclockwise: Refresh",
+                },
+                "action_id": "action:refresh_status",
+                "value": "refresh_status",
+            },
+        ]
+    )
 
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": status_text}},
@@ -1135,7 +1159,10 @@ async def export_session(ack, say, command, client, context) -> None:
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": ":globe_with_meridians: HTML"},
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":globe_with_meridians: HTML",
+                    },
                     "action_id": "export:html",
                     "value": "html",
                 },
@@ -1224,7 +1251,10 @@ async def end_session(ack, say, command, client, context) -> None:
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": ":file_folder: Change Project"},
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":file_folder: Change Project",
+                    },
                     "action_id": "action:show_projects",
                     "value": "show_projects",
                 },
@@ -1399,13 +1429,21 @@ async def git_command(ack, say, command, client, context) -> None:
         if not git_status.is_clean:
             status_message += "\n*Changes:*\n"
             if git_status.modified:
-                status_message += f":pencil: Modified: {len(git_status.modified)} files\n"
+                status_message += (
+                    f":pencil: Modified: {len(git_status.modified)} files\n"
+                )
             if git_status.added:
-                status_message += f":heavy_plus_sign: Added: {len(git_status.added)} files\n"
+                status_message += (
+                    f":heavy_plus_sign: Added: {len(git_status.added)} files\n"
+                )
             if git_status.deleted:
-                status_message += f":heavy_minus_sign: Deleted: {len(git_status.deleted)} files\n"
+                status_message += (
+                    f":heavy_minus_sign: Deleted: {len(git_status.deleted)} files\n"
+                )
             if git_status.untracked:
-                status_message += f":grey_question: Untracked: {len(git_status.untracked)} files\n"
+                status_message += (
+                    f":grey_question: Untracked: {len(git_status.untracked)} files\n"
+                )
         else:
             status_message += "\n:white_check_mark: Working directory clean\n"
 
@@ -1429,7 +1467,10 @@ async def git_command(ack, say, command, client, context) -> None:
                     },
                     {
                         "type": "button",
-                        "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":arrows_counterclockwise: Refresh",
+                        },
                         "action_id": "git:status",
                         "value": "status",
                     },

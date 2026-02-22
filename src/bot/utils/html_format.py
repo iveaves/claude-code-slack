@@ -12,6 +12,8 @@ still resolve at import time.
 """
 
 from .slack_format import escape_mrkdwn as escape_html  # noqa: F401
-from .slack_format import markdown_to_slack_mrkdwn as markdown_to_telegram_html  # noqa: F401
+from .slack_format import (  # noqa: F401
+    markdown_to_slack_mrkdwn as markdown_to_telegram_html,
+)
 
 __all__ = ["escape_html", "markdown_to_telegram_html"]

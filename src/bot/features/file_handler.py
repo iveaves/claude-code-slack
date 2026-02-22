@@ -163,7 +163,11 @@ class FileHandler:
         - A dict with Slack file_info (requires separate download)
         """
         if isinstance(document, dict):
-            file_name = document.get("file_name") or document.get("name") or f"file_{uuid.uuid4()}"
+            file_name = (
+                document.get("file_name")
+                or document.get("name")
+                or f"file_{uuid.uuid4()}"
+            )
             file_path = self.temp_dir / file_name
 
             if "file_bytes" in document:

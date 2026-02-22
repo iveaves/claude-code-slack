@@ -38,7 +38,9 @@ async def _format_progress_update(update_obj) -> Optional[str]:
             return f":white_check_mark: *{tool_name} completed*{execution_time}"
 
     elif update_obj.type == "progress":
-        progress_text = f":arrows_counterclockwise: *{update_obj.content or 'Working...'}*"
+        progress_text = (
+            f":arrows_counterclockwise: *{update_obj.content or 'Working...'}*"
+        )
 
         percentage = update_obj.get_progress_percentage()
         if percentage is not None:
@@ -155,9 +157,7 @@ async def handle_text_message(event, say, client, context) -> None:
                 return
 
         # Create progress message
-        progress_msg = await say(
-            ":thinking_face: Processing your request..."
-        )
+        progress_msg = await say(":thinking_face: Processing your request...")
         progress_ts = progress_msg["ts"]
 
         # Get Claude integration and storage from deps
@@ -173,9 +173,7 @@ async def handle_text_message(event, say, client, context) -> None:
             return
 
         # Get current directory
-        current_dir = user_state.get(
-            "current_directory", settings.approved_directory
-        )
+        current_dir = user_state.get("current_directory", settings.approved_directory)
 
         # Get existing session ID
         session_id = user_state.get("claude_session_id")
@@ -282,9 +280,7 @@ async def handle_text_message(event, say, client, context) -> None:
                 try:
                     await say(message.text)
                 except Exception:
-                    await say(
-                        ":x: Failed to send response. Please try again."
-                    )
+                    await say(":x: Failed to send response. Please try again.")
 
         # Update session info
         user_state["last_message"] = message_text
@@ -422,9 +418,7 @@ async def handle_file_share(event, say, client, context) -> None:
         if security_validator:
             valid, error = security_validator.validate_filename(filename)
             if not valid:
-                await say(
-                    f":x: *File Upload Rejected*\n\n{escape_mrkdwn(error)}"
-                )
+                await say(f":x: *File Upload Rejected*\n\n{escape_mrkdwn(error)}")
 
                 if audit_logger:
                     await audit_logger.log_security_violation(
@@ -455,9 +449,7 @@ async def handle_file_share(event, say, client, context) -> None:
                 await say(f":stopwatch: {limit_message}")
                 return
 
-        progress_msg = await say(
-            f":page_facing_up: Processing file: `{filename}`..."
-        )
+        progress_msg = await say(f":page_facing_up: Processing file: `{filename}`...")
         progress_ts = progress_msg["ts"]
 
         # Download file content from Slack

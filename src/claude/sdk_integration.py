@@ -180,15 +180,9 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
-        ask_user_callback: Optional[
-            Callable[[Dict[str, Any]], Any]
-        ] = None,
-        scheduler_callback: Optional[
-            Callable[[str, Dict[str, Any]], Any]
-        ] = None,
-        file_upload_callback: Optional[
-            Callable[[Dict[str, Any]], Any]
-        ] = None,
+        ask_user_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        scheduler_callback: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+        file_upload_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -217,7 +211,10 @@ class ClaudeSDKManager:
                 tool_input: Dict[str, Any],
                 context: Any,
             ) -> Any:
-                from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+                from claude_agent_sdk.types import (
+                    PermissionResultAllow,
+                    PermissionResultDeny,
+                )
 
                 if tool_name == "AskUserQuestion" and ask_user_callback:
                     try:
@@ -250,6 +247,7 @@ class ClaudeSDKManager:
 
             # Capture stderr from Claude CLI for debugging
             stderr_lines: List[str] = []
+
             def _capture_stderr(line: str) -> None:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line.strip())
@@ -384,6 +382,7 @@ class ClaudeSDKManager:
             # (thinking is shown in progress, not in final output)
             if content and "ThinkingBlock(" in content:
                 import re as _re
+
                 content = _re.sub(
                     r"\[?ThinkingBlock\(thinking=['\"]?(.*?)['\"]?\)\]?",
                     "",
@@ -429,7 +428,9 @@ class ClaudeSDKManager:
 
         except ProcessError as e:
             error_str = str(e)
-            stderr_output = "\n".join(stderr_lines) if stderr_lines else "(no stderr captured)"
+            stderr_output = (
+                "\n".join(stderr_lines) if stderr_lines else "(no stderr captured)"
+            )
             logger.error(
                 "Claude process failed",
                 error=error_str,
@@ -510,7 +511,9 @@ class ClaudeSDKManager:
                         block_type = getattr(block, "type", "")
                         if block_type == "thinking":
                             # Extract clean thinking text
-                            thinking_text = getattr(block, "thinking", None) or getattr(block, "text", None)
+                            thinking_text = getattr(block, "thinking", None) or getattr(
+                                block, "text", None
+                            )
                             if thinking_text:
                                 thinking_parts.append(thinking_text)
                             continue
@@ -545,6 +548,7 @@ class ClaudeSDKManager:
                     content_str = str(content)
                     # Clean ThinkingBlock wrapper if present
                     import re as _re
+
                     content_str = _re.sub(
                         r"\[?ThinkingBlock\(thinking=['\"]?(.*?)['\"]?\)\]?",
                         r"\1",

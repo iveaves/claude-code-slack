@@ -48,9 +48,7 @@ class ProjectChannelManager:
         # Runtime channel_id -> project mapping (built during sync)
         self._channel_map: dict[str, ProjectDefinition] = {}
 
-    async def sync_channels(
-        self, client: AsyncWebClient
-    ) -> ChannelSyncResult:
+    async def sync_channels(self, client: AsyncWebClient) -> ChannelSyncResult:
         """Create/reconcile Slack channels for all enabled projects."""
         result = ChannelSyncResult()
         enabled = self.registry.list_enabled()
@@ -155,9 +153,7 @@ class ProjectChannelManager:
         """Alias for sync_channels."""
         return await self.sync_channels(client)
 
-    async def resolve_project(
-        self, channel_id: str
-    ) -> Optional[ProjectDefinition]:
+    async def resolve_project(self, channel_id: str) -> Optional[ProjectDefinition]:
         """Resolve mapped project for a Slack channel.
 
         Checks in order:

@@ -113,7 +113,9 @@ class NotificationService:
                     kwargs["thread_ts"] = event.thread_ts
 
                 await self.client.chat_postMessage(**kwargs)
-                self._last_send_per_channel[channel_id] = asyncio.get_event_loop().time()
+                self._last_send_per_channel[channel_id] = (
+                    asyncio.get_event_loop().time()
+                )
 
                 if len(chunks) > 1:
                     await asyncio.sleep(SEND_INTERVAL_SECONDS)

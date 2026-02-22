@@ -34,7 +34,9 @@ def _get_user_state(deps: dict, user_id: str) -> dict:
     return user_states.setdefault(user_id, {})
 
 
-async def handle_action(ack: Any, body: dict, say: Any, action: dict, client: Any, context: dict) -> None:
+async def handle_action(
+    ack: Any, body: dict, say: Any, action: dict, client: Any, context: dict
+) -> None:
     """Route Slack Block Kit action callbacks to appropriate handlers."""
     await ack()
 
@@ -49,10 +51,14 @@ async def handle_action(ack: Any, body: dict, say: Any, action: dict, client: An
     try:
         if action_id.startswith("cd_"):
             project_name = value or action_id.replace("cd_", "")
-            await handle_cd_action(user_id, project_name, say, client, body, deps, context)
+            await handle_cd_action(
+                user_id, project_name, say, client, body, deps, context
+            )
         elif action_id.startswith("action_"):
             action_type = action_id.replace("action_", "")
-            await handle_general_action(user_id, action_type, say, client, body, deps, context)
+            await handle_general_action(
+                user_id, action_type, say, client, body, deps, context
+            )
         elif action_id.startswith("confirm_"):
             confirmation = action_id.replace("confirm_", "")
             await say(f"{'Confirmed' if confirmation == 'yes' else 'Cancelled'}.")
@@ -72,7 +78,9 @@ async def handle_action(ack: Any, body: dict, say: Any, action: dict, client: An
             await handle_git_action(user_id, git_action, say, client, deps, context)
         elif action_id.startswith("export_"):
             export_format = value or action_id.replace("export_", "")
-            await handle_export_action(user_id, export_format, say, client, deps, context)
+            await handle_export_action(
+                user_id, export_format, say, client, deps, context
+            )
         else:
             await say(f"Unknown action: `{escape_mrkdwn(action_id)}`")
 
@@ -87,8 +95,13 @@ async def handle_action(ack: Any, body: dict, say: Any, action: dict, client: An
 
 
 async def handle_cd_action(
-    user_id: str, project_name: str, say: Any, client: Any,
-    body: dict, deps: dict, context: dict
+    user_id: str,
+    project_name: str,
+    say: Any,
+    client: Any,
+    body: dict,
+    deps: dict,
+    context: dict,
 ) -> None:
     """Handle directory change from Block Kit button."""
     settings: Settings = context.get("settings")
@@ -145,8 +158,13 @@ async def handle_cd_action(
 
 
 async def handle_general_action(
-    user_id: str, action_type: str, say: Any, client: Any,
-    body: dict, deps: dict, context: dict
+    user_id: str,
+    action_type: str,
+    say: Any,
+    client: Any,
+    body: dict,
+    deps: dict,
+    context: dict,
 ) -> None:
     """Handle general action callbacks."""
     settings: Settings = context.get("settings")
@@ -165,8 +183,11 @@ async def handle_general_action(
 
     elif action_type == "show_projects":
         entries = sorted(
-            [d for d in settings.approved_directory.iterdir()
-             if d.is_dir() and not d.name.startswith(".")],
+            [
+                d
+                for d in settings.approved_directory.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            ],
             key=lambda d: d.name,
         )
         if not entries:
@@ -179,19 +200,24 @@ async def handle_general_action(
             is_git = (d / ".git").is_dir()
             icon = ":package:" if is_git else ":file_folder:"
             lines.append(f"{icon} `{d.name}/`")
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": d.name},
-                "action_id": f"cd_{d.name}",
-                "value": d.name,
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": d.name},
+                    "action_id": f"cd_{d.name}",
+                    "value": d.name,
+                }
+            )
 
         blocks: List[dict] = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": "*Repos*\n\n" + "\n".join(lines)}},
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "*Repos*\n\n" + "\n".join(lines)},
+            },
         ]
         # Split buttons into rows of 5 (Slack max per actions block)
         for i in range(0, len(elements), 5):
-            blocks.append({"type": "actions", "elements": elements[i:i+5]})
+            blocks.append({"type": "actions", "elements": elements[i : i + 5]})
 
         await say(text="Select a repo:", blocks=blocks)
 
@@ -216,8 +242,7 @@ async def handle_general_action(
 
 
 async def handle_quick_action(
-    user_id: str, action_id: str, say: Any, client: Any,
-    deps: dict, context: dict
+    user_id: str, action_id: str, say: Any, client: Any, deps: dict, context: dict
 ) -> None:
     """Handle quick action callbacks."""
     claude_integration = deps.get("claude_integration")
@@ -263,8 +288,7 @@ async def handle_quick_action(
 
 
 async def handle_git_action(
-    user_id: str, git_action: str, say: Any, client: Any,
-    deps: dict, context: dict
+    user_id: str, git_action: str, say: Any, client: Any, deps: dict, context: dict
 ) -> None:
     """Handle git-related action callbacks."""
     settings: Settings = context.get("settings")
@@ -310,8 +334,7 @@ async def handle_git_action(
 
 
 async def handle_export_action(
-    user_id: str, export_format: str, say: Any, client: Any,
-    deps: dict, context: dict
+    user_id: str, export_format: str, say: Any, client: Any, deps: dict, context: dict
 ) -> None:
     """Handle export format selection callbacks."""
     if export_format == "cancel":

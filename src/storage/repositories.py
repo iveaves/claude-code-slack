@@ -235,9 +235,7 @@ class ProjectThreadRepository:
         """Initialize repository."""
         self.db = db_manager
 
-    async def get_by_channel_id(
-        self, channel_id: str
-    ) -> Optional[ProjectThreadModel]:
+    async def get_by_channel_id(self, channel_id: str) -> Optional[ProjectThreadModel]:
         """Find active mapping by Slack channel ID."""
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
