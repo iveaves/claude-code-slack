@@ -24,7 +24,7 @@ class AuditEvent:
     """Security audit event."""
 
     timestamp: datetime
-    user_id: int
+    user_id: str
     event_type: str
     success: bool
     details: Dict[str, Any]
@@ -52,7 +52,7 @@ class AuditStorage:
 
     async def get_events(
         self,
-        user_id: Optional[int] = None,
+        user_id: Optional[str] = None,
         event_type: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -62,7 +62,7 @@ class AuditStorage:
         raise NotImplementedError
 
     async def get_security_violations(
-        self, user_id: Optional[int] = None, limit: int = 100
+        self, user_id: Optional[str] = None, limit: int = 100
     ) -> List[AuditEvent]:
         """Get security violations."""
         raise NotImplementedError
@@ -95,7 +95,7 @@ class InMemoryAuditStorage(AuditStorage):
 
     async def get_events(
         self,
-        user_id: Optional[int] = None,
+        user_id: Optional[str] = None,
         event_type: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -122,7 +122,7 @@ class InMemoryAuditStorage(AuditStorage):
         return filtered_events[:limit]
 
     async def get_security_violations(
-        self, user_id: Optional[int] = None, limit: int = 100
+        self, user_id: Optional[str] = None, limit: int = 100
     ) -> List[AuditEvent]:
         """Get security violations."""
         return await self.get_events(
@@ -139,7 +139,7 @@ class AuditLogger:
 
     async def log_auth_attempt(
         self,
-        user_id: int,
+        user_id: str,
         success: bool,
         method: str,
         reason: Optional[str] = None,
@@ -170,7 +170,7 @@ class AuditLogger:
 
     async def log_session_event(
         self,
-        user_id: int,
+        user_id: str,
         action: str,
         success: bool = True,
         details: Optional[Dict[str, Any]] = None,
@@ -189,7 +189,7 @@ class AuditLogger:
 
     async def log_command(
         self,
-        user_id: int,
+        user_id: str,
         command: str,
         args: List[str],
         success: bool,
@@ -228,7 +228,7 @@ class AuditLogger:
 
     async def log_file_access(
         self,
-        user_id: int,
+        user_id: str,
         file_path: str,
         action: str,  # read, write, delete, create
         success: bool,
@@ -251,7 +251,7 @@ class AuditLogger:
 
     async def log_security_violation(
         self,
-        user_id: int,
+        user_id: str,
         violation_type: str,
         details: str,
         severity: str = "medium",
@@ -288,7 +288,7 @@ class AuditLogger:
 
     async def log_rate_limit_exceeded(
         self,
-        user_id: int,
+        user_id: str,
         limit_type: str,  # request, cost
         current_usage: float,
         limit_value: float,
@@ -391,7 +391,7 @@ class AuditLogger:
         return "low"
 
     async def get_user_activity_summary(
-        self, user_id: int, hours: int = 24
+        self, user_id: str, hours: int = 24
     ) -> Dict[str, Any]:
         """Get activity summary for user."""
         start_time = datetime.now(UTC) - timedelta(hours=hours)

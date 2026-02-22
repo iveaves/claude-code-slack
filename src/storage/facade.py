@@ -65,7 +65,7 @@ class Storage:
 
     async def save_claude_interaction(
         self,
-        user_id: int,
+        user_id: str,
         session_id: str,
         prompt: str,
         response: ClaudeResponse,
@@ -149,7 +149,7 @@ class Storage:
         await self.audit.log_event(audit_event)
 
     async def get_or_create_user(
-        self, user_id: int, username: Optional[str] = None
+        self, user_id: str, username: Optional[str] = None
     ) -> UserModel:
         """Get or create user."""
         user = await self.users.get_user(user_id)
@@ -168,7 +168,7 @@ class Storage:
         return user
 
     async def create_session(
-        self, user_id: int, project_path: str, session_id: str
+        self, user_id: str, project_path: str, session_id: str
     ) -> SessionModel:
         """Create new session."""
         session = SessionModel(
@@ -191,7 +191,7 @@ class Storage:
 
     async def log_security_event(
         self,
-        user_id: int,
+        user_id: str,
         event_type: str,
         event_data: Dict[str, Any],
         success: bool = True,
@@ -211,7 +211,7 @@ class Storage:
 
     async def log_bot_event(
         self,
-        user_id: int,
+        user_id: str,
         event_type: str,
         event_data: Dict[str, Any],
         success: bool = True,
@@ -229,12 +229,12 @@ class Storage:
 
     # Convenience methods
 
-    async def is_user_allowed(self, user_id: int) -> bool:
+    async def is_user_allowed(self, user_id: str) -> bool:
         """Check if user is allowed."""
         user = await self.users.get_user(user_id)
         return user.is_allowed if user else False
 
-    async def get_user_session_summary(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_session_summary(self, user_id: str) -> Dict[str, Any]:
         """Get user session summary."""
         sessions = await self.sessions.get_user_sessions(user_id, active_only=False)
         active_sessions = [s for s in sessions if s.is_active]
@@ -275,7 +275,7 @@ class Storage:
 
         return {"sessions_cleaned": sessions_cleaned}
 
-    async def get_user_dashboard(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_dashboard(self, user_id: str) -> Dict[str, Any]:
         """Get comprehensive user dashboard data."""
         # Get user info
         user = await self.users.get_user(user_id)

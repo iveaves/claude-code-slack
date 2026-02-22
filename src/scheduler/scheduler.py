@@ -50,10 +50,10 @@ class JobScheduler:
         job_name: str,
         cron_expression: str,
         prompt: str,
-        target_chat_ids: Optional[List[int]] = None,
+        target_channel_ids: Optional[List[str]] = None,
         working_directory: Optional[Path] = None,
         skill_name: Optional[str] = None,
-        created_by: int = 0,
+        created_by: str = "",
     ) -> str:
         """Add a new scheduled job.
 
@@ -61,10 +61,10 @@ class JobScheduler:
             job_name: Human-readable job name.
             cron_expression: Cron-style schedule (e.g. "0 9 * * 1-5").
             prompt: The prompt to send to Claude when the job fires.
-            target_chat_ids: Telegram chat IDs to send the response to.
+            target_channel_ids: Slack channel IDs to send the response to.
             working_directory: Working directory for Claude execution.
             skill_name: Optional skill to invoke.
-            created_by: Telegram user ID of the creator.
+            created_by: Slack user ID of the creator.
 
         Returns:
             The job ID.
@@ -79,10 +79,12 @@ class JobScheduler:
                 "job_name": job_name,
                 "prompt": prompt,
                 "working_directory": str(work_dir),
-                "target_chat_ids": target_chat_ids or [],
+                "target_channel_ids": target_channel_ids or [],
                 "skill_name": skill_name,
             },
             name=job_name,
+            max_instances=1,
+            coalesce=True,
         )
 
         # Persist to database
@@ -91,7 +93,7 @@ class JobScheduler:
             job_name=job_name,
             cron_expression=cron_expression,
             prompt=prompt,
-            target_chat_ids=target_chat_ids or [],
+            target_channel_ids=target_channel_ids or [],
             working_directory=str(work_dir),
             skill_name=skill_name,
             created_by=created_by,
@@ -130,7 +132,7 @@ class JobScheduler:
         job_name: str,
         prompt: str,
         working_directory: str,
-        target_chat_ids: List[int],
+        target_channel_ids: List[str],
         skill_name: Optional[str],
     ) -> None:
         """Called by APScheduler when a job triggers. Publishes a ScheduledEvent."""
@@ -138,7 +140,7 @@ class JobScheduler:
             job_name=job_name,
             prompt=prompt,
             working_directory=Path(working_directory),
-            target_chat_ids=target_chat_ids,
+            target_channel_ids=target_channel_ids,
             skill_name=skill_name,
         )
 
@@ -164,10 +166,11 @@ class JobScheduler:
                 try:
                     trigger = CronTrigger.from_crontab(row_dict["cron_expression"])
 
-                    # Parse target_chat_ids from stored string
+                    # Parse channel IDs from stored comma-separated string
+                    # DB column is target_chat_ids (legacy name from Telegram)
                     chat_ids_str = row_dict.get("target_chat_ids", "")
-                    chat_ids = (
-                        [int(x) for x in chat_ids_str.split(",") if x.strip()]
+                    channel_ids = (
+                        [x.strip() for x in chat_ids_str.split(",") if x.strip()]
                         if chat_ids_str
                         else []
                     )
@@ -179,12 +182,14 @@ class JobScheduler:
                             "job_name": row_dict["job_name"],
                             "prompt": row_dict["prompt"],
                             "working_directory": row_dict["working_directory"],
-                            "target_chat_ids": chat_ids,
+                            "target_channel_ids": channel_ids,
                             "skill_name": row_dict.get("skill_name"),
                         },
                         id=row_dict["job_id"],
                         name=row_dict["job_name"],
                         replace_existing=True,
+                        max_instances=1,
+                        coalesce=True,
                     )
                     logger.debug(
                         "Loaded scheduled job from DB",
@@ -208,13 +213,13 @@ class JobScheduler:
         job_name: str,
         cron_expression: str,
         prompt: str,
-        target_chat_ids: List[int],
+        target_channel_ids: List[str],
         working_directory: str,
         skill_name: Optional[str],
-        created_by: int,
+        created_by: str,
     ) -> None:
         """Persist a job definition to the database."""
-        chat_ids_str = ",".join(str(cid) for cid in target_chat_ids)
+        chat_ids_str = ",".join(str(cid) for cid in target_channel_ids)
         async with self.db_manager.get_connection() as conn:
             await conn.execute(
                 """

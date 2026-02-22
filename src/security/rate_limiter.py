@@ -69,10 +69,10 @@ class RateLimiter:
 
     def __init__(self, config: Settings):
         self.config = config
-        self.request_buckets: Dict[int, RateLimitBucket] = {}
-        self.cost_tracker: Dict[int, float] = defaultdict(float)
-        self.cost_reset_time: Dict[int, datetime] = {}
-        self.locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.request_buckets: Dict[str, RateLimitBucket] = {}
+        self.cost_tracker: Dict[str, float] = defaultdict(float)
+        self.cost_reset_time: Dict[str, datetime] = {}
+        self.locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
         # Calculate refill rate from config
         self.refill_rate = (
@@ -89,7 +89,7 @@ class RateLimiter:
         )
 
     async def check_rate_limit(
-        self, user_id: int, cost: float = 1.0, tokens: int = 1
+        self, user_id: str, cost: float = 1.0, tokens: int = 1
     ) -> Tuple[bool, Optional[str]]:
         """Check if request is allowed under rate limits."""
         async with self.locks[user_id]:
@@ -124,7 +124,7 @@ class RateLimiter:
             return True, None
 
     def _check_request_rate(
-        self, user_id: int, tokens: int
+        self, user_id: str, tokens: int
     ) -> Tuple[bool, Optional[str]]:
         """Check request rate limit."""
         bucket = self._get_or_create_bucket(user_id)
@@ -143,7 +143,7 @@ class RateLimiter:
         return False, message
 
     def _check_cost_limit(
-        self, user_id: int, cost: float
+        self, user_id: str, cost: float
     ) -> Tuple[bool, Optional[str]]:
         """Check cost-based limit."""
         # Reset cost tracker if enough time has passed
@@ -161,12 +161,12 @@ class RateLimiter:
 
         return True, None
 
-    def _consume_request_tokens(self, user_id: int, tokens: int) -> None:
+    def _consume_request_tokens(self, user_id: str, tokens: int) -> None:
         """Consume tokens from request bucket."""
         bucket = self._get_or_create_bucket(user_id)
         bucket.consume(tokens)
 
-    def _track_cost(self, user_id: int, cost: float) -> None:
+    def _track_cost(self, user_id: str, cost: float) -> None:
         """Track cost usage for user."""
         self.cost_tracker[user_id] += cost
 
@@ -177,7 +177,7 @@ class RateLimiter:
             total_usage=self.cost_tracker[user_id],
         )
 
-    def _get_or_create_bucket(self, user_id: int) -> RateLimitBucket:
+    def _get_or_create_bucket(self, user_id: str) -> RateLimitBucket:
         """Get or create rate limit bucket for user."""
         if user_id not in self.request_buckets:
             self.request_buckets[user_id] = RateLimitBucket(
@@ -190,7 +190,7 @@ class RateLimiter:
 
         return self.request_buckets[user_id]
 
-    def _maybe_reset_cost_tracker(self, user_id: int) -> None:
+    def _maybe_reset_cost_tracker(self, user_id: str) -> None:
         """Reset cost tracker if reset period has passed."""
         now = datetime.now(UTC)
         last_reset = self.cost_reset_time.get(user_id, now - timedelta(days=1))
@@ -210,7 +210,7 @@ class RateLimiter:
                     reset_time=now.isoformat(),
                 )
 
-    async def reset_user_limits(self, user_id: int) -> None:
+    async def reset_user_limits(self, user_id: str) -> None:
         """Reset all limits for a user (admin function)."""
         async with self.locks[user_id]:
             # Reset cost tracking
@@ -227,7 +227,7 @@ class RateLimiter:
 
             logger.info("User limits reset", user_id=user_id, old_cost=old_cost)
 
-    def get_user_status(self, user_id: int) -> Dict[str, Any]:
+    def get_user_status(self, user_id: str) -> Dict[str, Any]:
         """Get current rate limit status for user."""
         # Get request bucket status
         bucket = self._get_or_create_bucket(user_id)

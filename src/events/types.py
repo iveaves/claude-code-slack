@@ -9,13 +9,13 @@ from .bus import Event
 
 @dataclass
 class UserMessageEvent(Event):
-    """A message from a Telegram user."""
+    """A message from a Slack user."""
 
-    user_id: int = 0
-    chat_id: int = 0
+    user_id: str = ""
+    channel_id: str = ""
     text: str = ""
     working_directory: Path = field(default_factory=lambda: Path("."))
-    source: str = "telegram"
+    source: str = "slack"
 
 
 @dataclass
@@ -37,7 +37,7 @@ class ScheduledEvent(Event):
     job_name: str = ""
     prompt: str = ""
     working_directory: Path = field(default_factory=lambda: Path("."))
-    target_chat_ids: List[int] = field(default_factory=list)
+    target_channel_ids: List[str] = field(default_factory=list)
     skill_name: Optional[str] = None
     source: str = "scheduler"
 
@@ -46,9 +46,8 @@ class ScheduledEvent(Event):
 class AgentResponseEvent(Event):
     """An agent has produced a response to deliver."""
 
-    chat_id: int = 0
+    channel_id: str = ""
     text: str = ""
-    parse_mode: Optional[str] = "HTML"
-    reply_to_message_id: Optional[int] = None
+    thread_ts: Optional[str] = None
     source: str = "agent"
     originating_event_id: Optional[str] = None

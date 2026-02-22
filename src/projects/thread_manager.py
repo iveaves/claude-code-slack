@@ -1,13 +1,12 @@
-"""Telegram forum topic synchronization and project resolution."""
+"""Slack channel synchronization and project resolution."""
 
 from dataclasses import dataclass
 from typing import Optional
 
 import structlog
-from telegram import Bot
-from telegram.error import TelegramError
+from slack_sdk.errors import SlackApiError
+from slack_sdk.web.async_client import AsyncWebClient
 
-from ..storage.models import ProjectThreadModel
 from ..storage.repositories import ProjectThreadRepository
 from .registry import ProjectDefinition, ProjectRegistry
 
@@ -15,24 +14,29 @@ logger = structlog.get_logger()
 
 
 class PrivateTopicsUnavailableError(RuntimeError):
-    """Raised when private chat topics are unavailable/disabled."""
+    """Kept for backwards compatibility."""
 
 
 @dataclass
-class TopicSyncResult:
-    """Summary of a synchronization run."""
+class ChannelSyncResult:
+    """Summary of a channel synchronization run."""
 
     created: int = 0
     reused: int = 0
-    renamed: int = 0
     failed: int = 0
     deactivated: int = 0
-    closed: int = 0
-    reopened: int = 0
 
 
-class ProjectThreadManager:
-    """Maintains mapping between projects and Telegram forum topics."""
+TopicSyncResult = ChannelSyncResult
+
+
+class ProjectChannelManager:
+    """Maintains mapping between projects and Slack channels.
+
+    Channels are auto-created with the naming convention #pan-{slug}.
+    If a project already has a channel_id in the YAML config, that's used directly.
+    Otherwise, the manager creates/finds channels automatically.
+    """
 
     def __init__(
         self,
@@ -41,340 +45,223 @@ class ProjectThreadManager:
     ) -> None:
         self.registry = registry
         self.repository = repository
+        # Runtime channel_id -> project mapping (built during sync)
+        self._channel_map: dict[str, ProjectDefinition] = {}
 
-    async def sync_topics(self, bot: Bot, chat_id: int) -> TopicSyncResult:
-        """Create/reconcile topics for all enabled projects."""
-        result = TopicSyncResult()
-
+    async def sync_channels(
+        self, client: AsyncWebClient
+    ) -> ChannelSyncResult:
+        """Create/reconcile Slack channels for all enabled projects."""
+        result = ChannelSyncResult()
         enabled = self.registry.list_enabled()
-        active_slugs = [project.slug for project in enabled]
+
+        # Get existing channels in workspace
+        existing_channels = await self._list_channels(client)
+        channel_map = {ch["name"]: ch for ch in existing_channels}
+        channel_id_map = {ch["id"]: ch for ch in existing_channels}
 
         for project in enabled:
             try:
-                existing = await self.repository.get_by_chat_project(
-                    chat_id,
+                # If project has a channel_id in YAML, use it directly
+                if project.channel_id:
+                    if project.channel_id in channel_id_map:
+                        self._channel_map[project.channel_id] = project
+                        result.reused += 1
+                        logger.info(
+                            "Project mapped to existing channel (from config)",
+                            slug=project.slug,
+                            channel_id=project.channel_id,
+                        )
+                    elif project.channel_id.startswith("D"):
+                        # DM channels won't appear in conversations_list
+                        # but are valid for project routing
+                        self._channel_map[project.channel_id] = project
+                        result.reused += 1
+                        logger.info(
+                            "Project mapped to DM channel (from config)",
+                            slug=project.slug,
+                            channel_id=project.channel_id,
+                        )
+                    else:
+                        result.failed += 1
+                        logger.warning(
+                            "Configured channel_id not found in workspace",
+                            slug=project.slug,
+                            channel_id=project.channel_id,
+                        )
+                    continue
+
+                # Auto-create/find channel with pan- prefix
+                channel_name = self._project_channel_name(project.slug)
+
+                # Check DB for existing mapping
+                existing_mapping = await self.repository.get_by_project_slug(
                     project.slug,
                 )
+                if existing_mapping and existing_mapping.is_active:
+                    self._channel_map[existing_mapping.channel_id] = project
+                    result.reused += 1
+                    continue
 
-                if existing:
-                    handled = await self._sync_existing_mapping(
-                        bot=bot,
-                        project=project,
-                        mapping=existing,
-                        result=result,
+                # Check if channel already exists in Slack
+                if channel_name in channel_map:
+                    channel_id = channel_map[channel_name]["id"]
+                    await self.repository.upsert_mapping(
+                        project_slug=project.slug,
+                        chat_id=0,
+                        channel_id=channel_id,
+                        topic_name=project.name,
+                        is_active=True,
                     )
-                    if handled:
-                        continue
+                    self._channel_map[channel_id] = project
+                    result.reused += 1
+                    continue
 
-                await self._create_and_map_topic(
-                    bot=bot,
-                    project=project,
-                    chat_id=chat_id,
-                    result=result,
+                # Create new channel
+                channel_id = await self._create_channel(
+                    client, channel_name, project.name
                 )
+                if channel_id:
+                    await self.repository.upsert_mapping(
+                        project_slug=project.slug,
+                        chat_id=0,
+                        channel_id=channel_id,
+                        topic_name=project.name,
+                        is_active=True,
+                    )
+                    self._channel_map[channel_id] = project
+                    result.created += 1
+                else:
+                    result.failed += 1
 
-            except TelegramError as e:
-                if self._is_private_topics_unavailable_error(e):
-                    raise PrivateTopicsUnavailableError(
-                        "Private chat topics are not enabled for this bot chat."
-                    ) from e
+            except SlackApiError as e:
                 result.failed += 1
                 logger.error(
-                    "Failed to sync project topic",
+                    "Failed to sync project channel",
                     project_slug=project.slug,
-                    chat_id=chat_id,
                     error=str(e),
                 )
             except Exception as e:
                 result.failed += 1
                 logger.error(
-                    "Failed to sync project topic",
+                    "Failed to sync project channel",
                     project_slug=project.slug,
-                    chat_id=chat_id,
                     error=str(e),
                 )
-
-        stale_mappings = await self.repository.list_stale_active_mappings(
-            chat_id=chat_id,
-            active_project_slugs=active_slugs,
-        )
-        for stale in stale_mappings:
-            try:
-                await bot.close_forum_topic(
-                    chat_id=stale.chat_id,
-                    message_thread_id=stale.message_thread_id,
-                )
-                result.closed += 1
-            except TelegramError as e:
-                if self._is_private_topics_unavailable_error(e):
-                    raise PrivateTopicsUnavailableError(
-                        "Private chat topics are not enabled for this bot chat."
-                    ) from e
-                result.failed += 1
-                logger.warning(
-                    "Could not close stale topic",
-                    chat_id=stale.chat_id,
-                    message_thread_id=stale.message_thread_id,
-                    project_slug=stale.project_slug,
-                    error=str(e),
-                )
-            finally:
-                await self.repository.set_active(
-                    chat_id=stale.chat_id,
-                    project_slug=stale.project_slug,
-                    is_active=False,
-                )
-                result.deactivated += 1
 
         return result
 
-    async def _sync_existing_mapping(
-        self,
-        bot: Bot,
-        project: ProjectDefinition,
-        mapping: ProjectThreadModel,
-        result: TopicSyncResult,
-    ) -> bool:
-        """Sync an existing mapping. Returns True if handled without recreate."""
-        chat_id = mapping.chat_id
-
-        if not mapping.is_active:
-            reopen_status = await self._reopen_topic_if_possible(bot, mapping)
-            if reopen_status == "unusable":
-                return False
-            if reopen_status == "failed":
-                result.failed += 1
-                return True
-            result.reopened += 1
-
-        usable_status = await self._ensure_topic_usable(bot, mapping)
-        if usable_status == "unusable":
-            return False
-        if usable_status == "failed":
-            result.failed += 1
-            return True
-
-        topic_name = mapping.topic_name
-        if mapping.topic_name != project.name:
-            rename_status = await self._rename_topic(
-                bot=bot,
-                mapping=mapping,
-                target_name=project.name,
-            )
-            if rename_status == "unusable":
-                return False
-            if rename_status == "failed":
-                await self.repository.upsert_mapping(
-                    project_slug=project.slug,
-                    chat_id=chat_id,
-                    message_thread_id=mapping.message_thread_id,
-                    topic_name=mapping.topic_name,
-                    is_active=True,
-                )
-                result.failed += 1
-                result.reused += 1
-                return True
-            topic_name = project.name
-            result.renamed += 1
-
-        await self.repository.upsert_mapping(
-            project_slug=project.slug,
-            chat_id=chat_id,
-            message_thread_id=mapping.message_thread_id,
-            topic_name=topic_name,
-            is_active=True,
-        )
-        result.reused += 1
-        return True
-
-    async def _create_and_map_topic(
-        self,
-        bot: Bot,
-        project: ProjectDefinition,
-        chat_id: int,
-        result: TopicSyncResult,
-    ) -> None:
-        """Create a topic and persist mapping."""
-        topic = await bot.create_forum_topic(
-            chat_id=chat_id,
-            name=project.name,
-        )
-
-        await self.repository.upsert_mapping(
-            project_slug=project.slug,
-            chat_id=chat_id,
-            message_thread_id=topic.message_thread_id,
-            topic_name=project.name,
-            is_active=True,
-        )
-        await self._send_topic_bootstrap_message(
-            bot=bot,
-            chat_id=chat_id,
-            message_thread_id=topic.message_thread_id,
-            project_name=project.name,
-        )
-        result.created += 1
-
-    async def _ensure_topic_usable(self, bot: Bot, mapping: ProjectThreadModel) -> str:
-        """Ensure mapped topic is usable. Returns ok|unusable|failed."""
-        try:
-            await bot.reopen_forum_topic(
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-            )
-            return "ok"
-        except TelegramError as e:
-            if self._is_topic_unusable_error(e):
-                return "unusable"
-            logger.warning(
-                "Could not verify topic usability",
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-                error=str(e),
-            )
-            return "failed"
-
-    async def _reopen_topic_if_possible(
-        self, bot: Bot, mapping: ProjectThreadModel
-    ) -> str:
-        """Reopen inactive topic. Returns reopened|unusable|failed."""
-        try:
-            await bot.reopen_forum_topic(
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-            )
-            return "reopened"
-        except TelegramError as e:
-            if self._is_topic_unusable_error(e):
-                return "unusable"
-            logger.warning(
-                "Could not reopen topic",
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-                error=str(e),
-            )
-            return "failed"
+    async def sync_topics(self, client: AsyncWebClient, **kwargs) -> ChannelSyncResult:
+        """Alias for sync_channels."""
+        return await self.sync_channels(client)
 
     async def resolve_project(
-        self, chat_id: int, message_thread_id: int
+        self, channel_id: str
     ) -> Optional[ProjectDefinition]:
-        """Resolve mapped project for chat+thread."""
-        mapping = await self.repository.get_by_chat_thread(chat_id, message_thread_id)
-        if not mapping:
+        """Resolve mapped project for a Slack channel.
+
+        Checks in order:
+        1. Runtime channel map (populated during sync)
+        2. Registry channel_id (from YAML config)
+        3. Database mapping (from auto-created channels)
+        """
+        if not channel_id:
             return None
 
-        project = self.registry.get_by_slug(mapping.project_slug)
-        if not project or not project.enabled:
+        # Check runtime map first (fastest)
+        if channel_id in self._channel_map:
+            project = self._channel_map[channel_id]
+            if project.enabled:
+                return project
             return None
 
-        return project
+        # Check registry (YAML channel_id)
+        project = self.registry.get_by_channel_id(channel_id)
+        if project and project.enabled:
+            self._channel_map[channel_id] = project
+            return project
+
+        # Check database mapping
+        mapping = await self.repository.get_by_channel_id(channel_id)
+        if mapping:
+            project = self.registry.get_by_slug(mapping.project_slug)
+            if project and project.enabled:
+                self._channel_map[channel_id] = project
+                return project
+
+        return None
 
     @staticmethod
-    def guidance_message(mode: str = "group") -> str:
-        """Guidance text for strict routing rejections."""
-        context_label = (
-            "mapped project topic in this private chat"
-            if mode == "private"
-            else "mapped project forum topic"
-        )
+    def guidance_message(**kwargs) -> str:
+        """Guidance text for channel routing rejections."""
         return (
-            "🚫 <b>Project Thread Required</b>\n\n"
-            "This bot is configured for strict project threads.\n"
-            f"Please send commands in a {context_label}.\n\n"
-            "If topics are missing or stale, run <code>/sync_threads</code>."
+            "*Project Channel Required*\n\n"
+            "This bot is configured for project channels.\n"
+            "Please send messages in a `#pan-` project channel.\n\n"
+            "Use `/sync_channels` to create/refresh project channels."
         )
 
     @staticmethod
-    def private_topics_unavailable_message() -> str:
-        """User guidance when private chat topics are unavailable."""
-        return (
-            "❌ <b>Private Topics Unavailable</b>\n\n"
-            "This bot requires topics in private chat, "
-            "but topics are not available.\n\n"
-            "Enable topics for this bot chat in Telegram, then run "
-            "<code>/sync_threads</code>."
-        )
+    def _project_channel_name(slug: str) -> str:
+        """Convert project slug to a Slack channel name."""
+        name = f"pan-{slug}".lower()
+        name = name.replace(" ", "-").replace("_", "-")
+        return name[:80]
 
-    @staticmethod
-    def _is_private_topics_unavailable_error(error: TelegramError) -> bool:
-        """Return True for Telegram errors indicating topics are unavailable."""
-        text = str(error).lower()
-        markers = [
-            "topics are not enabled",
-            "topic_closed",
-            "topic deleted",
-            "forum topics are disabled",
-            "direct messages topic",
-            "chat is not a forum",
-        ]
-        return any(marker in text for marker in markers)
+    async def _list_channels(self, client: AsyncWebClient) -> list:
+        """List all channels in the workspace."""
+        channels = []
+        cursor = None
+        while True:
+            kwargs = {"types": "public_channel,private_channel", "limit": 200}
+            if cursor:
+                kwargs["cursor"] = cursor
+            response = await client.conversations_list(**kwargs)
+            channels.extend(response.get("channels", []))
+            cursor = response.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+        return channels
 
-    async def _rename_topic(
-        self,
-        bot: Bot,
-        mapping: ProjectThreadModel,
-        target_name: str,
-    ) -> str:
-        """Rename forum topic. Returns renamed|unusable|failed."""
+    async def _create_channel(
+        self, client: AsyncWebClient, name: str, purpose: str
+    ) -> Optional[str]:
+        """Create a Slack channel and return its ID."""
         try:
-            await bot.edit_forum_topic(
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-                name=target_name,
+            response = await client.conversations_create(
+                name=name,
+                is_private=False,
             )
-            return "renamed"
-        except TelegramError as e:
-            if self._is_topic_unusable_error(e):
-                return "unusable"
-            logger.warning(
-                "Could not rename topic",
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-                target_name=target_name,
-                error=str(e),
-            )
-            return "failed"
+            channel_id = response["channel"]["id"]
 
-    async def _send_topic_bootstrap_message(
-        self,
-        bot: Bot,
-        chat_id: int,
-        message_thread_id: int,
-        project_name: str,
-    ) -> None:
-        """Post a short message so newly created topics are visible in clients."""
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                message_thread_id=message_thread_id,
-                text=(
-                    f"🧵 <b>{project_name}</b>\n\n"
-                    "This project topic is ready. "
-                    "Send messages here to work on this project."
-                ),
-                parse_mode="HTML",
-            )
-        except TelegramError as e:
-            logger.warning(
-                "Could not send topic bootstrap message",
-                chat_id=chat_id,
-                message_thread_id=message_thread_id,
-                project_name=project_name,
-                error=str(e),
-            )
+            # Set purpose
+            try:
+                await client.conversations_setPurpose(
+                    channel=channel_id,
+                    purpose=f"Claude Code project: {purpose}",
+                )
+            except SlackApiError:
+                pass
 
-    @staticmethod
-    def _is_topic_unusable_error(error: TelegramError) -> bool:
-        """Return True when topic no longer exists or thread id is invalid."""
-        text = str(error).lower()
-        markers = [
-            "topic deleted",
-            "topic was deleted",
-            "topic_closed",
-            "topic closed",
-            "message thread not found",
-            "thread not found",
-            "invalid message thread id",
-            "forum topic not found",
-        ]
-        return any(marker in text for marker in markers)
+            # Post intro message
+            try:
+                await client.chat_postMessage(
+                    channel=channel_id,
+                    text=f"*{purpose}*\n\nThis channel is mapped to a project directory. Send messages here to work on this project with Claude.",
+                )
+            except SlackApiError:
+                pass
+
+            logger.info("Created project channel", name=name, channel_id=channel_id)
+            return channel_id
+
+        except SlackApiError as e:
+            if e.response.get("error") == "name_taken":
+                logger.warning("Channel name taken", name=name)
+            else:
+                logger.error("Failed to create channel", name=name, error=str(e))
+            return None
+
+
+# Keep old name as alias
+ProjectThreadManager = ProjectChannelManager

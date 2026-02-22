@@ -172,14 +172,6 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     event_security.register()
 
-    agent_handler = AgentHandler(
-        event_bus=event_bus,
-        claude_integration=claude_integration,
-        default_working_directory=config.approved_directory,
-        default_user_id=config.allowed_users[0] if config.allowed_users else "",
-    )
-    agent_handler.register()
-
     # Create bot with all dependencies
     dependencies = {
         "auth_manager": auth_manager,
@@ -194,6 +186,20 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     }
 
     bot = ClaudeCodeBot(config, dependencies)
+
+    # Create agent handler with orchestrator reference for shared sessions
+    from slack_sdk.web.async_client import AsyncWebClient
+
+    slack_client = AsyncWebClient(token=config.slack_bot_token_str)
+    agent_handler = AgentHandler(
+        event_bus=event_bus,
+        claude_integration=claude_integration,
+        default_working_directory=config.approved_directory,
+        default_user_id=config.allowed_users[0] if config.allowed_users else "",
+        slack_client=slack_client,
+        orchestrator=bot.orchestrator,
+    )
+    agent_handler.register()
 
     logger.info("Application components created successfully")
 

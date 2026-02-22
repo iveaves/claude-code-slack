@@ -1,4 +1,4 @@
-"""YAML-backed project registry for thread mode."""
+"""YAML-backed project registry with optional Slack channel mappings."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +15,7 @@ class ProjectDefinition:
     name: str
     relative_path: Path
     absolute_path: Path
+    channel_id: Optional[str] = None
     enabled: bool = True
 
 
@@ -24,6 +25,9 @@ class ProjectRegistry:
     def __init__(self, projects: List[ProjectDefinition]) -> None:
         self._projects = projects
         self._by_slug: Dict[str, ProjectDefinition] = {p.slug: p for p in projects}
+        self._by_channel: Dict[str, ProjectDefinition] = {
+            p.channel_id: p for p in projects if p.channel_id
+        }
 
     @property
     def projects(self) -> List[ProjectDefinition]:
@@ -37,6 +41,10 @@ class ProjectRegistry:
     def get_by_slug(self, slug: str) -> Optional[ProjectDefinition]:
         """Get project by slug."""
         return self._by_slug.get(slug)
+
+    def get_by_channel_id(self, channel_id: str) -> Optional[ProjectDefinition]:
+        """Get project by Slack channel ID."""
+        return self._by_channel.get(channel_id)
 
 
 def load_project_registry(
@@ -69,6 +77,9 @@ def load_project_registry(
         slug = str(raw.get("slug", "")).strip()
         name = str(raw.get("name", "")).strip()
         rel_path_raw = str(raw.get("path", "")).strip()
+        channel_id = raw.get("channel_id")
+        if channel_id:
+            channel_id = str(channel_id).strip() or None
         enabled = bool(raw.get("enabled", True))
 
         if not slug:
@@ -88,10 +99,12 @@ def load_project_registry(
             absolute_path.relative_to(approved_root)
         except ValueError as e:
             raise ValueError(
-                f"Project '{slug}' path outside approved " f"directory: {rel_path_raw}"
+                f"Project '{slug}' path outside approved "
+                f"directory: {rel_path_raw}"
             ) from e
 
-        if not absolute_path.exists() or not absolute_path.is_dir():
+        # Only validate path exists for enabled projects
+        if enabled and (not absolute_path.exists() or not absolute_path.is_dir()):
             raise ValueError(
                 f"Project '{slug}' path does not exist or "
                 f"is not a directory: {absolute_path}"
@@ -115,6 +128,7 @@ def load_project_registry(
                 name=name,
                 relative_path=rel_path,
                 absolute_path=absolute_path,
+                channel_id=channel_id,
                 enabled=enabled,
             )
         )

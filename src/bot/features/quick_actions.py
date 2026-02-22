@@ -7,8 +7,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
 from src.storage.models import SessionModel
 
 logger = logging.getLogger(__name__)
@@ -217,34 +215,42 @@ class QuickActionManager:
                 return False
         return True
 
-    def create_inline_keyboard(
-        self, actions: List[QuickAction], columns: int = 2
-    ) -> InlineKeyboardMarkup:
-        """Create inline keyboard for quick actions.
+    def create_blocks(
+        self, actions: List[QuickAction], columns: int = 3
+    ) -> List[dict]:
+        """Create Block Kit action blocks for quick actions.
 
         Args:
             actions: List of actions to display
-            columns: Number of columns in keyboard
+            columns: Number of buttons per row
 
         Returns:
-            Inline keyboard markup
+            List of Block Kit action blocks
         """
-        keyboard = []
-        row = []
+        blocks = []
+        row_elements = []
 
         for i, action in enumerate(actions):
-            button = InlineKeyboardButton(
-                text=f"{action.icon} {action.name}",
-                callback_data=f"quick_action:{action.id}",
-            )
-            row.append(button)
+            button = {
+                "type": "button",
+                "text": {"type": "plain_text", "text": f"{action.icon} {action.name}"},
+                "action_id": f"quick_action_{action.id}",
+                "value": action.id,
+            }
+            row_elements.append(button)
 
-            # Add row when full or last item
-            if len(row) >= columns or i == len(actions) - 1:
-                keyboard.append(row)
-                row = []
+            if len(row_elements) >= columns or i == len(actions) - 1:
+                blocks.append({"type": "actions", "elements": row_elements})
+                row_elements = []
 
-        return InlineKeyboardMarkup(keyboard)
+        return blocks
+
+    # Keep old name for compatibility
+    def create_inline_keyboard(
+        self, actions: List[QuickAction], columns: int = 2
+    ) -> List[dict]:
+        """Alias for create_blocks."""
+        return self.create_blocks(actions, columns)
 
     async def execute_action(
         self, action_id: str, session: SessionModel, callback: Optional[Callable] = None

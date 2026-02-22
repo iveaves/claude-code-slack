@@ -140,13 +140,38 @@ class ClaudeSDKManager:
                 "SDK may fail if Claude is not installed or not in PATH."
             )
 
-        # Set up environment for Claude Code SDK if API key is provided
-        # If no API key is provided, the SDK will use existing CLI authentication
-        if config.anthropic_api_key_str:
-            os.environ["ANTHROPIC_API_KEY"] = config.anthropic_api_key_str
+        # Unset env vars inherited from a parent Claude Code session that
+        # would interfere with spawning a child Claude process.
+        os.environ.pop("CLAUDECODE", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+        # Set up environment for Claude Code SDK if API key is explicitly
+        # provided in .env (not inherited from a parent session).
+        # Read directly from .env to avoid picking up the parent session's key.
+        explicit_key = self._read_env_file_key("ANTHROPIC_API_KEY", config)
+        if explicit_key:
+            os.environ["ANTHROPIC_API_KEY"] = explicit_key
             logger.info("Using provided API key for Claude SDK authentication")
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
+
+    @staticmethod
+    def _read_env_file_key(key: str, config: Settings) -> Optional[str]:
+        """Read a key directly from the .env file, ignoring inherited env vars."""
+        env_path = Path(".env")
+        if not env_path.exists():
+            return None
+        try:
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if k.strip() == key and v.strip():
+                    return v.strip()
+        except OSError:
+            pass
+        return None
 
     async def execute_command(
         self,
@@ -155,9 +180,23 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        ask_user_callback: Optional[
+            Callable[[Dict[str, Any]], Any]
+        ] = None,
+        scheduler_callback: Optional[
+            Callable[[str, Dict[str, Any]], Any]
+        ] = None,
+        file_upload_callback: Optional[
+            Callable[[Dict[str, Any]], Any]
+        ] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
+
+        # Ensure nesting guard env vars are cleared before every subprocess
+        # spawn (not just __init__), since the parent session may re-inject them.
+        os.environ.pop("CLAUDECODE", None)
+        os.environ.pop("CLAUDE_CODE", None)
 
         logger.info(
             "Starting Claude SDK command",
@@ -169,30 +208,94 @@ class ClaudeSDKManager:
         try:
             # Build Claude Agent options
             cli_path = find_claude_cli(self.config.claude_cli_path)
+
+            # Build can_use_tool callback — only used for AskUserQuestion
+            # (needs permission-level input injection). All other custom tools
+            # are registered as real MCP tools via create_bot_mcp_server().
+            async def _can_use_tool(
+                tool_name: str,
+                tool_input: Dict[str, Any],
+                context: Any,
+            ) -> Any:
+                from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+                if tool_name == "AskUserQuestion" and ask_user_callback:
+                    try:
+                        answers = await ask_user_callback(tool_input)
+                        if answers:
+                            updated = dict(tool_input)
+                            updated["answers"] = answers
+                            return PermissionResultAllow(
+                                behavior="allow",
+                                updated_input=updated,
+                                updated_permissions=None,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "AskUserQuestion callback failed, denying",
+                            error=str(e),
+                        )
+                        return PermissionResultDeny(
+                            behavior="deny",
+                            message=f"Failed to get user input: {e}",
+                            interrupt=False,
+                        )
+
+                # Allow all other tools (bypassPermissions handles the rest)
+                return PermissionResultAllow(
+                    behavior="allow",
+                    updated_input=None,
+                    updated_permissions=None,
+                )
+
+            # Capture stderr from Claude CLI for debugging
+            stderr_lines: List[str] = []
+            def _capture_stderr(line: str) -> None:
+                stderr_lines.append(line)
+                logger.debug("Claude CLI stderr", line=line.strip())
+
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
                 disallowed_tools=self.config.claude_disallowed_tools,
                 cli_path=cli_path,
+                permission_mode="bypassPermissions",
+                can_use_tool=_can_use_tool,
+                # Load user + project + local settings so skills are discovered
+                setting_sources=["user", "project", "local"],
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
                     "autoAllowBashIfSandboxed": True,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
-                system_prompt=(
-                    f"All file operations must stay within {working_directory}. "
-                    "Use relative paths."
-                ),
+                system_prompt=self._build_system_prompt(working_directory),
+                stderr=_capture_stderr,
             )
 
-            # Pass MCP server configuration if enabled
+            # Register bot-specific tools as a real MCP server
+            from .mcp_tools import create_bot_mcp_server
+
+            mcp_servers: Dict[str, Any] = {}
+
+            # Load user-configured MCP servers if enabled
             if self.config.enable_mcp and self.config.mcp_config_path:
-                options.mcp_servers = self._load_mcp_config(self.config.mcp_config_path)
+                mcp_servers = self._load_mcp_config(self.config.mcp_config_path)
                 logger.info(
                     "MCP servers configured",
                     mcp_config_path=str(self.config.mcp_config_path),
                 )
+
+            # Add bot tools MCP server (only if there are callbacks to wire up)
+            if file_upload_callback or scheduler_callback:
+                bot_server = create_bot_mcp_server(
+                    file_upload_fn=file_upload_callback,
+                    scheduler_fn=scheduler_callback,
+                )
+                mcp_servers["slack-bot-tools"] = bot_server
+
+            if mcp_servers:
+                options.mcp_servers = mcp_servers
 
             # Resume previous session if we have a session_id
             if session_id and continue_session:
@@ -277,6 +380,17 @@ class ClaudeSDKManager:
                 else self._extract_content_from_messages(messages)
             )
 
+            # Clean ThinkingBlock wrapper remnants from final content
+            # (thinking is shown in progress, not in final output)
+            if content and "ThinkingBlock(" in content:
+                import re as _re
+                content = _re.sub(
+                    r"\[?ThinkingBlock\(thinking=['\"]?(.*?)['\"]?\)\]?",
+                    "",
+                    content,
+                    flags=_re.DOTALL,
+                ).strip()
+
             return ClaudeResponse(
                 content=content,
                 session_id=final_session_id,
@@ -315,10 +429,12 @@ class ClaudeSDKManager:
 
         except ProcessError as e:
             error_str = str(e)
+            stderr_output = "\n".join(stderr_lines) if stderr_lines else "(no stderr captured)"
             logger.error(
                 "Claude process failed",
                 error=error_str,
                 exit_code=getattr(e, "exit_code", None),
+                stderr=stderr_output,
             )
             # Check if the process error is MCP-related
             if "mcp" in error_str.lower():
@@ -389,7 +505,15 @@ class ClaudeSDKManager:
                 tool_calls = []
 
                 if content and isinstance(content, list):
+                    thinking_parts = []
                     for block in content:
+                        block_type = getattr(block, "type", "")
+                        if block_type == "thinking":
+                            # Extract clean thinking text
+                            thinking_text = getattr(block, "thinking", None) or getattr(block, "text", None)
+                            if thinking_text:
+                                thinking_parts.append(thinking_text)
+                            continue
                         if isinstance(block, ToolUseBlock):
                             tool_calls.append(
                                 {
@@ -401,6 +525,14 @@ class ClaudeSDKManager:
                         elif hasattr(block, "text"):
                             text_parts.append(block.text)
 
+                    # Send thinking as a separate stream update
+                    if thinking_parts and stream_callback:
+                        thinking_update = StreamUpdate(
+                            type="thinking",
+                            content="\n".join(thinking_parts),
+                        )
+                        await stream_callback(thinking_update)
+
                 if text_parts or tool_calls:
                     update = StreamUpdate(
                         type="assistant",
@@ -410,11 +542,20 @@ class ClaudeSDKManager:
                     await stream_callback(update)
                 elif content:
                     # Fallback for non-list content
-                    update = StreamUpdate(
-                        type="assistant",
-                        content=str(content),
-                    )
-                    await stream_callback(update)
+                    content_str = str(content)
+                    # Clean ThinkingBlock wrapper if present
+                    import re as _re
+                    content_str = _re.sub(
+                        r"\[?ThinkingBlock\(thinking=['\"]?(.*?)['\"]?\)\]?",
+                        r"\1",
+                        content_str,
+                    ).strip()
+                    if content_str:
+                        update = StreamUpdate(
+                            type="assistant",
+                            content=content_str,
+                        )
+                        await stream_callback(update)
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
@@ -436,8 +577,14 @@ class ClaudeSDKManager:
             if isinstance(message, AssistantMessage):
                 content = getattr(message, "content", [])
                 if content and isinstance(content, list):
-                    # Extract text from TextBlock objects
                     for block in content:
+                        block_type = getattr(block, "type", "")
+                        # Skip tool use blocks — they're tracked separately
+                        if isinstance(block, ToolUseBlock):
+                            continue
+                        # Skip thinking blocks from final output (shown in progress only)
+                        if block_type == "thinking":
+                            continue
                         if hasattr(block, "text"):
                             content_parts.append(block.text)
                 elif content:
@@ -468,6 +615,22 @@ class ClaudeSDKManager:
                             )
 
         return tools_used
+
+    def _build_system_prompt(self, working_directory: Path) -> str:
+        """Build system prompt with context about the bot environment."""
+        return (
+            f"All file operations must stay within {working_directory}. "
+            "Use relative paths.\n\n"
+            "IMPORTANT: You are running as a Slack bot agent. "
+            "You do NOT have access to paths outside the working directory. "
+            "When creating skills/commands, ALWAYS use the project-scoped "
+            f"directory at {working_directory}/.claude/commands/ or "
+            f"{working_directory}/.claude/skills/ "
+            "(NOT ~/.claude/). "
+            "This is your only writable .claude directory.\n\n"
+            "To send files or images to the user, use the SlackFileUpload tool. "
+            "To schedule recurring tasks, use the ScheduleJob tool."
+        )
 
     def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:
         """Load MCP server configuration from a JSON file.

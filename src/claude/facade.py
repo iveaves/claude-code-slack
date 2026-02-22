@@ -179,11 +179,9 @@ class ClaudeIntegration:
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired on Claude's side),
-                # retry as a fresh session
-                if (
-                    should_continue
-                    and "no conversation found" in str(resume_error).lower()
-                ):
+                # retry as a fresh session. Catch broadly — exit code 1,
+                # "no conversation found", connection errors, etc.
+                if should_continue:
                     logger.warning(
                         "Session resume failed, starting fresh session",
                         failed_session_id=claude_session_id,
@@ -449,6 +447,7 @@ class ClaudeIntegration:
                 "Grep",
                 "LS",
                 "Task",
+                "TaskOutput",
                 "MultiEdit",
                 "NotebookRead",
                 "NotebookEdit",

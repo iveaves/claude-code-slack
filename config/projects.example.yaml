@@ -1,10 +1,26 @@
+# Project Channel Configuration
+#
+# Map Slack channels to project directories.
+# Create your channels in Slack first, then add the channel ID here.
+#
+# To find a channel ID: right-click channel name in Slack → "View channel details" → copy ID at bottom
+#
+# Fields:
+#   slug: unique identifier for the project
+#   name: display name
+#   path: directory path relative to APPROVED_DIRECTORY
+#   channel_id: Slack channel ID (e.g. C01ABC123)
+#   enabled: true/false
+
 projects:
-  - slug: claude-code-telegram
-    name: Claude Code Telegram
-    path: claude-code-telegram-main
+  - slug: claude-code-slack
+    name: Claude Code Slack Bot
+    path: claude-code-telegram
+    channel_id: C0123456789
     enabled: true
 
-  - slug: infra
-    name: Infrastructure
-    path: infrastructure
+  - slug: my-webapp
+    name: My Web App
+    path: webapp
+    channel_id: C9876543210
     enabled: true

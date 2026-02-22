@@ -30,7 +30,7 @@ def _parse_datetime(value: Any) -> Any:
 class UserModel:
     """User data model."""
 
-    user_id: int
+    user_id: str
     telegram_username: Optional[str] = None
     first_seen: Optional[datetime] = None
     last_active: Optional[datetime] = None
@@ -65,7 +65,7 @@ class SessionModel:
     """Session data model."""
 
     session_id: str
-    user_id: int
+    user_id: str
     project_path: str
     created_at: datetime
     last_used: datetime
@@ -109,7 +109,7 @@ class ProjectThreadModel:
 
     project_slug: str
     chat_id: int
-    message_thread_id: int
+    channel_id: str
     topic_name: str
     is_active: bool = True
     created_at: Optional[datetime] = None
@@ -143,7 +143,7 @@ class MessageModel:
     """Message data model."""
 
     session_id: str
-    user_id: int
+    user_id: str
     timestamp: datetime
     prompt: str
     message_id: Optional[int] = None
@@ -217,7 +217,7 @@ class ToolUsageModel:
 class AuditLogModel:
     """Audit log data model."""
 
-    user_id: int
+    user_id: str
     event_type: str
     timestamp: datetime
     id: Optional[int] = None
@@ -258,7 +258,7 @@ class AuditLogModel:
 class CostTrackingModel:
     """Cost tracking data model."""
 
-    user_id: int
+    user_id: str
     date: str  # ISO date format (YYYY-MM-DD)
     daily_cost: float = 0.0
     request_count: int = 0
@@ -278,7 +278,7 @@ class CostTrackingModel:
 class UserTokenModel:
     """User token data model."""
 
-    user_id: int
+    user_id: str
     token_hash: str
     created_at: datetime
     token_id: Optional[int] = None

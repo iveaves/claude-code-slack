@@ -1,14 +1,11 @@
 [tool.poetry]
-name = "claude-code-telegram"
-version = "1.2.0"
-description = "Telegram bot for remote Claude Code access with comprehensive configuration management"
+name = "claude-code-slack"
+version = "1.0.0"
+description = "Slack bot for remote Claude Code access with comprehensive configuration management"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/richardatkinson/claude-code-telegram"
-repository = "https://github.com/richardatkinson/claude-code-telegram"
-documentation = "https://github.com/richardatkinson/claude-code-telegram/blob/main/docs/"
-keywords = ["telegram", "bot", "claude", "ai", "development", "remote", "coding"]
+keywords = ["slack", "bot", "claude", "ai", "development", "remote", "coding"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,7 +22,8 @@ packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-python-telegram-bot = "^22.6"
+slack-bolt = "^1.20"
+slack-sdk = "^3.33"
 structlog = "^25.4.0"
 pydantic = "^2.11.5"
 pydantic-settings = "^2.9.1"
@@ -33,14 +31,15 @@ python-dotenv = "^1.0.0"
 aiofiles = "^24.1.0"
 aiosqlite = "^0.21.0"
 anthropic = "^0.40.0"
-claude-agent-sdk = "^0.1.38"
+claude-agent-sdk = "^0.1.39"
 fastapi = "^0.115.0"
 uvicorn = {version = "^0.34.0", extras = ["standard"]}
 apscheduler = "^3.10"
 PyYAML = "^6.0.2"
 
+aiohttp = "^3.13.3"
 [tool.poetry.scripts]
-claude-telegram-bot = "src.main:run"
+claude-slack-bot = "src.main:run"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

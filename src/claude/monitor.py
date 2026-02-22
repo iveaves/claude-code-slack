@@ -162,7 +162,7 @@ class ToolMonitor:
         tool_name: str,
         tool_input: Dict[str, Any],
         working_directory: Path,
-        user_id: int,
+        user_id: str,
     ) -> Tuple[bool, Optional[str]]:
         """Validate tool call before execution."""
         logger.debug(
@@ -172,14 +172,14 @@ class ToolMonitor:
             user_id=user_id,
         )
 
-        # When disabled, skip only allowlist/disallowlist name checks.
-        # Keep path and command safety validation active.
+        # When disabled, skip ALL validation (trusted environment).
         if self.disable_tool_validation:
             logger.debug(
-                "Tool name validation disabled; skipping allow/disallow checks",
+                "Tool validation disabled; allowing all tool calls",
                 tool_name=tool_name,
                 user_id=user_id,
             )
+            return True, None
 
         # Check if tool is allowed
         if (
@@ -329,7 +329,7 @@ class ToolMonitor:
         self.security_violations.clear()
         logger.info("Tool monitor statistics reset")
 
-    def get_user_tool_usage(self, user_id: int) -> Dict[str, Any]:
+    def get_user_tool_usage(self, user_id: str) -> Dict[str, Any]:
         """Get tool usage for specific user."""
         user_violations = [
             v for v in self.security_violations if v.get("user_id") == user_id

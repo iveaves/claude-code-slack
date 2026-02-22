@@ -1,13 +1,13 @@
 """Application-wide constants."""
 
 # Version info
-APP_NAME = "Claude Code Telegram Bot"
-APP_DESCRIPTION = "Telegram bot for remote Claude Code access"
+APP_NAME = "Claude Code Slack Bot"
+APP_DESCRIPTION = "Slack bot for remote Claude Code access"
 
 # Default limits
 DEFAULT_CLAUDE_TIMEOUT_SECONDS = 300
 DEFAULT_CLAUDE_MAX_TURNS = 10
-DEFAULT_CLAUDE_MAX_COST_PER_USER = 10.0
+DEFAULT_CLAUDE_MAX_COST_PER_USER = 35.0
 
 DEFAULT_RATE_LIMIT_REQUESTS = 10
 DEFAULT_RATE_LIMIT_WINDOW = 60
@@ -17,8 +17,8 @@ DEFAULT_SESSION_TIMEOUT_HOURS = 24
 DEFAULT_MAX_SESSIONS_PER_USER = 5
 
 # Message limits
-TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-SAFE_MESSAGE_LENGTH = 4000  # Leave room for formatting
+SLACK_MAX_MESSAGE_LENGTH = 4000
+SAFE_MESSAGE_LENGTH = 3900  # Leave room for formatting
 
 # Session limits
 MAX_SESSION_LENGTH = 1000  # Maximum messages per session

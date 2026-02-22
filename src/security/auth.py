@@ -27,7 +27,7 @@ logger = structlog.get_logger()
 class UserSession:
     """User session data."""
 
-    user_id: int
+    user_id: str
     auth_provider: str
     created_at: datetime
     last_activity: datetime
@@ -51,18 +51,18 @@ class AuthProvider(ABC):
     """Base authentication provider."""
 
     @abstractmethod
-    async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
+    async def authenticate(self, user_id: str, credentials: Dict[str, Any]) -> bool:
         """Verify user credentials."""
 
     @abstractmethod
-    async def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user information."""
 
 
 class WhitelistAuthProvider(AuthProvider):
     """Whitelist-based authentication."""
 
-    def __init__(self, allowed_users: List[int], allow_all_dev: bool = False):
+    def __init__(self, allowed_users: List[str], allow_all_dev: bool = False):
         self.allowed_users = set(allowed_users)
         self.allow_all_dev = allow_all_dev
         logger.info(
@@ -71,7 +71,7 @@ class WhitelistAuthProvider(AuthProvider):
             allow_all_dev=allow_all_dev,
         )
 
-    async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
+    async def authenticate(self, user_id: str, credentials: Dict[str, Any]) -> bool:
         """Authenticate user against whitelist."""
         is_allowed = self.allow_all_dev or user_id in self.allowed_users
         logger.info(
@@ -79,7 +79,7 @@ class WhitelistAuthProvider(AuthProvider):
         )
         return is_allowed
 
-    async def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user information if whitelisted."""
         if self.allow_all_dev or user_id in self.allowed_users:
             return {
@@ -95,16 +95,16 @@ class TokenStorage(ABC):
 
     @abstractmethod
     async def store_token(
-        self, user_id: int, token_hash: str, expires_at: datetime
+        self, user_id: str, token_hash: str, expires_at: datetime
     ) -> None:
         """Store token hash for user."""
 
     @abstractmethod
-    async def get_user_token(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_token(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get token data for user."""
 
     @abstractmethod
-    async def revoke_token(self, user_id: int) -> None:
+    async def revoke_token(self, user_id: str) -> None:
         """Revoke token for user."""
 
 
@@ -112,10 +112,10 @@ class InMemoryTokenStorage(TokenStorage):
     """In-memory token storage for development/testing."""
 
     def __init__(self) -> None:
-        self._tokens: Dict[int, Dict[str, Any]] = {}
+        self._tokens: Dict[str, Dict[str, Any]] = {}
 
     async def store_token(
-        self, user_id: int, token_hash: str, expires_at: datetime
+        self, user_id: str, token_hash: str, expires_at: datetime
     ) -> None:
         """Store token hash in memory."""
         self._tokens[user_id] = {
@@ -124,7 +124,7 @@ class InMemoryTokenStorage(TokenStorage):
             "created_at": datetime.now(UTC),
         }
 
-    async def get_user_token(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_token(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get token data from memory."""
         token_data = self._tokens.get(user_id)
         if token_data and token_data["expires_at"] > datetime.now(UTC):
@@ -134,7 +134,7 @@ class InMemoryTokenStorage(TokenStorage):
             del self._tokens[user_id]
         return None
 
-    async def revoke_token(self, user_id: int) -> None:
+    async def revoke_token(self, user_id: str) -> None:
         """Remove token from memory."""
         self._tokens.pop(user_id, None)
 
@@ -153,7 +153,7 @@ class TokenAuthProvider(AuthProvider):
         self.token_lifetime = token_lifetime
         logger.info("Token auth provider initialized")
 
-    async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
+    async def authenticate(self, user_id: str, credentials: Dict[str, Any]) -> bool:
         """Authenticate using token."""
         token = credentials.get("token")
         if not token:
@@ -173,7 +173,7 @@ class TokenAuthProvider(AuthProvider):
         logger.info("Token authentication attempt", user_id=user_id, success=is_valid)
         return is_valid
 
-    async def generate_token(self, user_id: int) -> str:
+    async def generate_token(self, user_id: str) -> str:
         """Generate new authentication token."""
         token = secrets.token_urlsafe(32)
         hashed = self._hash_token(token)
@@ -186,12 +186,12 @@ class TokenAuthProvider(AuthProvider):
         )
         return token
 
-    async def revoke_token(self, user_id: int) -> None:
+    async def revoke_token(self, user_id: str) -> None:
         """Revoke user's token."""
         await self.storage.revoke_token(user_id)
         logger.info("Token revoked", user_id=user_id)
 
-    async def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user information if token is valid."""
         token_data = await self.storage.get_user_token(user_id)
         if token_data:
@@ -221,11 +221,11 @@ class AuthenticationManager:
             raise SecurityError("At least one authentication provider is required")
 
         self.providers = providers
-        self.sessions: Dict[int, UserSession] = {}
+        self.sessions: Dict[str, UserSession] = {}
         logger.info("Authentication manager initialized", providers=len(self.providers))
 
     async def authenticate_user(
-        self, user_id: int, credentials: Optional[Dict[str, Any]] = None
+        self, user_id: str, credentials: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Try authentication with all providers."""
         credentials = credentials or {}
@@ -255,7 +255,7 @@ class AuthenticationManager:
         logger.warning("Authentication failed for user", user_id=user_id)
         return False
 
-    async def _create_session(self, user_id: int, provider: AuthProvider) -> None:
+    async def _create_session(self, user_id: str, provider: AuthProvider) -> None:
         """Create authenticated session."""
         user_info = await provider.get_user_info(user_id)
         self.sessions[user_id] = UserSession(
@@ -270,7 +270,7 @@ class AuthenticationManager:
             "Session created", user_id=user_id, provider=provider.__class__.__name__
         )
 
-    def is_authenticated(self, user_id: int) -> bool:
+    def is_authenticated(self, user_id: str) -> bool:
         """Check if user has active session."""
         session = self.sessions.get(user_id)
         if session and not session.is_expired():
@@ -281,13 +281,13 @@ class AuthenticationManager:
             logger.info("Expired session removed", user_id=user_id)
         return False
 
-    def get_session(self, user_id: int) -> Optional[UserSession]:
+    def get_session(self, user_id: str) -> Optional[UserSession]:
         """Get user session if valid."""
         if self.is_authenticated(user_id):
             return self.sessions[user_id]
         return None
 
-    def refresh_session(self, user_id: int) -> bool:
+    def refresh_session(self, user_id: str) -> bool:
         """Refresh user session activity."""
         session = self.get_session(user_id)
         if session:
@@ -295,7 +295,7 @@ class AuthenticationManager:
             return True
         return False
 
-    def end_session(self, user_id: int) -> None:
+    def end_session(self, user_id: str) -> None:
         """End user session."""
         if user_id in self.sessions:
             del self.sessions[user_id]
@@ -320,7 +320,7 @@ class AuthenticationManager:
         self._cleanup_expired_sessions()
         return len(self.sessions)
 
-    def get_session_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+    def get_session_info(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get session information for user."""
         session = self.get_session(user_id)
         if session:

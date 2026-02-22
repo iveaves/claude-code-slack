@@ -41,16 +41,16 @@ clean:
 	rm -rf .coverage htmlcov/ .pytest_cache/ dist/ build/
 
 run:
-	poetry run claude-telegram-bot
+	poetry run claude-slack-bot
 
 # For debugging
 run-debug:
-	poetry run claude-telegram-bot --debug
+	poetry run claude-slack-bot --debug
 
 # Remote Mac Mini (SSH session)
 run-remote:  ## Start bot on remote Mac in tmux (persists after SSH disconnect)
 	security unlock-keychain ~/Library/Keychains/login.keychain-db
-	tmux new-session -d -s claude-bot 'poetry run claude-telegram-bot'
+	tmux new-session -d -s claude-bot 'poetry run claude-slack-bot'
 	@echo "Bot started in tmux session 'claude-bot'"
 	@echo "  Attach: make remote-attach"
 	@echo "  Stop:   make remote-stop"

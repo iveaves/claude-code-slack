@@ -42,7 +42,7 @@ class SessionExporter:
 
     async def export_session(
         self,
-        user_id: int,
+        user_id: str,
         session_id: str,
         format: ExportFormat = ExportFormat.MARKDOWN,
     ) -> ExportedSession:

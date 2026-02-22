@@ -109,6 +109,7 @@ class Settings(BaseSettings):
             "Grep",
             "LS",
             "Task",
+            "TaskOutput",
             "MultiEdit",
             "NotebookRead",
             "NotebookEdit",

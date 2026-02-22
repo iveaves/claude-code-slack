@@ -17,8 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
-from telegram import Document
-
 from src.config import Settings
 from src.security.validators import SecurityValidator
 
@@ -131,18 +129,20 @@ class FileHandler:
         }
 
     async def handle_document_upload(
-        self, document: Document, user_id: int, context: str = ""
+        self, document: any, user_id: str, context: str = ""
     ) -> ProcessedFile:
-        """Process uploaded document"""
+        """Process uploaded document.
 
-        # Download file
+        Args:
+            document: Either a Slack file_info dict or file bytes with metadata
+            user_id: Slack user ID
+            context: User-provided context/caption
+        """
         file_path = await self._download_file(document)
 
         try:
-            # Detect file type
             file_type = self._detect_file_type(file_path)
 
-            # Process based on type
             if file_type == "archive":
                 return await self._process_archive(file_path, context)
             elif file_type == "code":
@@ -153,20 +153,31 @@ class FileHandler:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
         finally:
-            # Cleanup
             file_path.unlink(missing_ok=True)
 
-    async def _download_file(self, document: Document) -> Path:
-        """Download file from Telegram"""
-        # Get file
-        file = await document.get_file()
+    async def _download_file(self, document: any) -> Path:
+        """Download file to temp directory.
 
-        # Create temp file path
-        file_name = document.file_name or f"file_{uuid.uuid4()}"
-        file_path = self.temp_dir / file_name
+        Accepts either:
+        - A dict with 'file_name' and 'file_bytes' keys
+        - A dict with Slack file_info (requires separate download)
+        """
+        if isinstance(document, dict):
+            file_name = document.get("file_name") or document.get("name") or f"file_{uuid.uuid4()}"
+            file_path = self.temp_dir / file_name
 
-        # Download to path
-        await file.download_to_drive(str(file_path))
+            if "file_bytes" in document:
+                file_path.write_bytes(document["file_bytes"])
+            else:
+                raise ValueError("Document dict must contain 'file_bytes'")
+        else:
+            # Legacy: raw bytes
+            file_name = f"file_{uuid.uuid4()}"
+            file_path = self.temp_dir / file_name
+            if isinstance(document, (bytes, bytearray)):
+                file_path.write_bytes(document)
+            else:
+                raise ValueError(f"Unsupported document type: {type(document)}")
 
         return file_path
 

@@ -57,7 +57,7 @@ class ProductionConfig:
     log_level: str = "INFO"
     enable_telemetry: bool = True
     # Use stricter defaults for production
-    claude_max_cost_per_user: float = 5.0  # Lower cost limit
+    claude_max_cost_per_user: float = 35.0  # Cost limit per user per day
     rate_limit_requests: int = 5  # Stricter rate limiting
     session_timeout_hours: int = 12  # Shorter session timeout
 

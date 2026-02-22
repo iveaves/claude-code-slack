@@ -1,7 +1,6 @@
-"""Event handlers that bridge the event bus to Claude and Telegram.
+"""Event handlers that bridge the event bus to Claude and Slack.
 
 AgentHandler: translates events into ClaudeIntegration.run_command() calls.
-NotificationHandler: subscribes to AgentResponseEvent and delivers to Telegram.
 """
 
 from pathlib import Path
@@ -19,9 +18,9 @@ logger = structlog.get_logger()
 class AgentHandler:
     """Translates incoming events into Claude agent executions.
 
-    Webhook and scheduled events are converted into prompts and sent
-    to ClaudeIntegration.run_command(). The response is published
-    back as an AgentResponseEvent for delivery.
+    Webhook events are converted into prompts and sent to
+    ClaudeIntegration.run_command(). Scheduled events are routed
+    through the orchestrator so they share the channel's session.
     """
 
     def __init__(
@@ -29,12 +28,16 @@ class AgentHandler:
         event_bus: EventBus,
         claude_integration: ClaudeIntegration,
         default_working_directory: Path,
-        default_user_id: int = 0,
+        default_user_id: str = "",
+        slack_client: Any = None,
+        orchestrator: Any = None,
     ) -> None:
         self.event_bus = event_bus
         self.claude = claude_integration
         self.default_working_directory = default_working_directory
         self.default_user_id = default_user_id
+        self.slack_client = slack_client
+        self.orchestrator = orchestrator
 
     def register(self) -> None:
         """Subscribe to events that need agent processing."""
@@ -63,13 +66,11 @@ class AgentHandler:
             )
 
             if response.content:
-                # We don't know which chat to send to from a webhook alone.
-                # The notification service needs configured target chats.
-                # Publish with chat_id=0 — the NotificationService
-                # will broadcast to configured notification_chat_ids.
+                # Publish with empty channel_id — the NotificationService
+                # will broadcast to configured notification_channel_ids.
                 await self.event_bus.publish(
                     AgentResponseEvent(
-                        chat_id=0,
+                        channel_id="",
                         text=response.content,
                         originating_event_id=event.id,
                     )
@@ -82,7 +83,12 @@ class AgentHandler:
             )
 
     async def handle_scheduled(self, event: Event) -> None:
-        """Process a scheduled event through Claude."""
+        """Process a scheduled event by routing through the orchestrator.
+
+        This ensures the job shares the same Claude session as the channel's
+        conversation, so the user and job have full context of each other.
+        Falls back to standalone run_command if orchestrator is unavailable.
+        """
         if not isinstance(event, ScheduledEvent):
             return
 
@@ -98,6 +104,26 @@ class AgentHandler:
                 f"/{event.skill_name}\n\n{prompt}" if prompt else f"/{event.skill_name}"
             )
 
+        # Route through orchestrator if available — this shares the channel's
+        # session so the job and user conversation have mutual context.
+        if self.orchestrator and self.slack_client and event.target_channel_ids:
+            for channel_id in event.target_channel_ids:
+                try:
+                    await self.orchestrator.run_scheduled_prompt(
+                        prompt=prompt,
+                        channel_id=channel_id,
+                        user_id=self.default_user_id,
+                        client=self.slack_client,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Orchestrator scheduled execution failed",
+                        job_name=event.job_name,
+                        channel_id=channel_id,
+                    )
+            return
+
+        # Fallback: standalone execution (no shared session context)
         working_dir = event.working_directory or self.default_working_directory
 
         try:
@@ -108,20 +134,19 @@ class AgentHandler:
             )
 
             if response.content:
-                for chat_id in event.target_chat_ids:
+                for channel_id in event.target_channel_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
-                            chat_id=chat_id,
+                            channel_id=channel_id,
                             text=response.content,
                             originating_event_id=event.id,
                         )
                     )
 
-                # Also broadcast to default chats if no targets specified
-                if not event.target_chat_ids:
+                if not event.target_channel_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
-                            chat_id=0,
+                            channel_id="",
                             text=response.content,
                             originating_event_id=event.id,
                         )
@@ -149,7 +174,6 @@ class AgentHandler:
         """Create a readable summary of a webhook payload."""
         lines: List[str] = []
         self._flatten_dict(payload, lines, max_depth=max_depth)
-        # Cap at 2000 chars to keep prompt reasonable
         summary = "\n".join(lines)
         if len(summary) > 2000:
             summary = summary[:2000] + "\n... (truncated)"
@@ -180,7 +204,7 @@ class AgentHandler:
                     lines.append(f"{full_key}: {val_str}")
         elif isinstance(data, list):
             lines.append(f"{prefix}: [{len(data)} items]")
-            for i, item in enumerate(data[:3]):  # Show first 3 items
+            for i, item in enumerate(data[:3]):
                 self._flatten_dict(item, lines, f"{prefix}[{i}]", depth + 1, max_depth)
         else:
             lines.append(f"{prefix}: {data}")

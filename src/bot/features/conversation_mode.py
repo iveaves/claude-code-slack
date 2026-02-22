@@ -28,8 +28,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import structlog
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
 from ...claude.sdk_integration import ClaudeResponse
 
 logger = structlog.get_logger()
@@ -39,7 +37,7 @@ logger = structlog.get_logger()
 class ConversationContext:
     """Context information for a conversation."""
 
-    user_id: int
+    user_id: str
     session_id: Optional[str] = None
     project_path: Optional[str] = None
     last_tools_used: List[str] = field(default_factory=list)
@@ -77,16 +75,16 @@ class ConversationEnhancer:
 
     def __init__(self) -> None:
         """Initialize conversation enhancer."""
-        self.conversation_contexts: Dict[int, ConversationContext] = {}
+        self.conversation_contexts: Dict[str, ConversationContext] = {}
 
-    def get_or_create_context(self, user_id: int) -> ConversationContext:
+    def get_or_create_context(self, user_id: str) -> ConversationContext:
         """Get or create conversation context for user."""
         if user_id not in self.conversation_contexts:
             self.conversation_contexts[user_id] = ConversationContext(user_id=user_id)
 
         return self.conversation_contexts[user_id]
 
-    def update_context(self, user_id: int, response: ClaudeResponse) -> None:
+    def update_context(self, user_id: str, response: ClaudeResponse) -> None:
         """Update conversation context with response."""
         context = self.get_or_create_context(user_id)
         context.update_from_response(response)
@@ -259,38 +257,47 @@ class ConversationEnhancer:
         # Return top 3-4 most relevant suggestions
         return prioritized[:4]
 
-    def create_follow_up_keyboard(self, suggestions: List[str]) -> InlineKeyboardMarkup:
-        """Create keyboard with follow-up suggestions."""
+    def create_follow_up_keyboard(self, suggestions: List[str]) -> List[dict]:
+        """Create Block Kit action blocks with follow-up suggestions."""
         if not suggestions:
-            return InlineKeyboardMarkup([])
+            return []
 
-        keyboard = []
+        blocks = []
 
-        # Add suggestion buttons (max 4, in rows of 1 for better mobile experience)
+        # Add suggestion buttons (max 4)
+        suggestion_elements = []
         for suggestion in suggestions[:4]:
-            # Create a shorter hash for callback data
             suggestion_hash = str(hash(suggestion) % 1000000)
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        f"💡 {suggestion}", callback_data=f"followup:{suggestion_hash}"
-                    )
-                ]
-            )
+            suggestion_elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": suggestion},
+                "action_id": f"followup_{suggestion_hash}",
+                "value": suggestion,
+            })
+
+        if suggestion_elements:
+            blocks.append({"type": "actions", "elements": suggestion_elements})
 
         # Add control buttons
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "✅ Continue Coding", callback_data="conversation:continue"
-                ),
-                InlineKeyboardButton(
-                    "🛑 End Session", callback_data="conversation:end"
-                ),
-            ]
-        )
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Continue Coding"},
+                    "action_id": "conversation_continue",
+                    "style": "primary",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "End Session"},
+                    "action_id": "conversation_end",
+                    "style": "danger",
+                },
+            ],
+        })
 
-        return InlineKeyboardMarkup(keyboard)
+        return blocks
 
     def should_show_suggestions(self, response: ClaudeResponse) -> bool:
         """Determine if follow-up suggestions should be shown."""
@@ -329,26 +336,24 @@ class ConversationEnhancer:
         response: ClaudeResponse,
         context: ConversationContext,
         max_content_length: int = 50000,
-    ) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+    ) -> tuple[str, Optional[List[dict]]]:
         """Format response with follow-up suggestions."""
-        # Truncate content only for extremely large responses;
-        # normal splitting into multiple Telegram messages is handled by the caller.
         content = response.content
         if len(content) > max_content_length:
             content = (
-                content[:max_content_length] + "\n\n... <i>(response truncated)</i>"
+                content[:max_content_length] + "\n\n... _(response truncated)_"
             )
 
         # Add session info if this is a new session
         if context.conversation_turn == 1 and response.session_id:
             session_info = (
-                f"\n\n🆔 <b>Session:</b> <code>{response.session_id[:8]}...</code>"
+                f"\n\n*Session:* `{response.session_id[:8]}...`"
             )
             content += session_info
 
         # Add cost info if significant
         if response.cost > 0.01:
-            cost_info = f"\n\n💰 <b>Cost:</b> ${response.cost:.4f}"
+            cost_info = f"\n\n*Cost:* ${response.cost:.4f}"
             content += cost_info
 
         # Generate follow-up suggestions
@@ -365,13 +370,13 @@ class ConversationEnhancer:
 
         return content, keyboard
 
-    def clear_context(self, user_id: int) -> None:
+    def clear_context(self, user_id: str) -> None:
         """Clear conversation context for user."""
         if user_id in self.conversation_contexts:
             del self.conversation_contexts[user_id]
             logger.debug("Cleared conversation context", user_id=user_id)
 
-    def get_context_summary(self, user_id: int) -> Optional[Dict]:
+    def get_context_summary(self, user_id: str) -> Optional[Dict]:
         """Get summary of conversation context."""
         context = self.conversation_contexts.get(user_id)
         if not context:

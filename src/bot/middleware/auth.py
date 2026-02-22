@@ -1,14 +1,33 @@
-"""Telegram bot authentication middleware."""
+"""Slack bot authentication middleware."""
 
 from datetime import UTC, datetime
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 import structlog
 
 logger = structlog.get_logger()
 
 
-async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -> Any:
+def _extract_user_id(body: dict, event: Any) -> str | None:
+    """Extract Slack user ID from body or event."""
+    # Slash commands put user_id in body
+    user_id = body.get("user_id")
+    if user_id:
+        return str(user_id)
+    # Action/interaction payloads put user in body["user"]["id"]
+    if isinstance(body.get("user"), dict):
+        user_id = body["user"].get("id")
+        if user_id:
+            return str(user_id)
+    # Message events put user in event dict
+    if isinstance(event, dict):
+        return event.get("user")
+    return None
+
+
+async def slack_auth_middleware(
+    body: dict, event: Any, context: dict, next: Callable
+) -> None:
     """Check authentication before processing messages.
 
     This middleware:
@@ -17,54 +36,39 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
     3. Updates session activity
     4. Logs authentication events
     """
-    # Extract user information
-    user_id = event.effective_user.id if event.effective_user else None
-    username = (
-        getattr(event.effective_user, "username", None)
-        if event.effective_user
-        else None
-    )
+    user_id = _extract_user_id(body, event)
 
     if not user_id:
-        logger.warning("No user information in update")
+        logger.warning("No user information in event")
         return
 
-    # Get dependencies from context
-    auth_manager = data.get("auth_manager")
-    audit_logger = data.get("audit_logger")
+    deps = context.get("deps", {})
+    auth_manager = deps.get("auth_manager")
+    audit_logger = deps.get("audit_logger")
 
     if not auth_manager:
         logger.error("Authentication manager not available in middleware context")
-        if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 Authentication system unavailable. Please try again later."
-            )
         return
 
     # Check if user is already authenticated
     if auth_manager.is_authenticated(user_id):
-        # Update session activity
         if auth_manager.refresh_session(user_id):
             session = auth_manager.get_session(user_id)
             logger.debug(
                 "Session refreshed",
                 user_id=user_id,
-                username=username,
                 auth_provider=session.auth_provider if session else None,
             )
-
-        # Continue to handler
-        return await handler(event, data)
+        # Store user_id in context for downstream handlers
+        context["user_id"] = user_id
+        await next()
+        return
 
     # User not authenticated - attempt authentication
-    logger.info(
-        "Attempting authentication for user", user_id=user_id, username=username
-    )
+    logger.info("Attempting authentication for user", user_id=user_id)
 
-    # Try to authenticate (providers will check whitelist and tokens)
     authentication_successful = await auth_manager.authenticate_user(user_id)
 
-    # Log authentication attempt
     if audit_logger:
         await audit_logger.log_auth_attempt(
             user_id=user_id,
@@ -78,85 +82,54 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
         logger.info(
             "User authenticated successfully",
             user_id=user_id,
-            username=username,
             auth_provider=session.auth_provider if session else None,
         )
-
-        # Welcome message for new session
-        if event.effective_message:
-            await event.effective_message.reply_text(
-                f"🔓 Welcome! You are now authenticated.\n"
-                f"Session started at {datetime.now(UTC).strftime('%H:%M:%S UTC')}"
-            )
-
-        # Continue to handler
-        return await handler(event, data)
-
+        context["user_id"] = user_id
+        await next()
+        return
     else:
-        # Authentication failed
-        logger.warning("Authentication failed", user_id=user_id, username=username)
-
-        if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 <b>Authentication Required</b>\n\n"
-                "You are not authorized to use this bot.\n"
-                "Please contact the administrator for access.\n\n"
-                f"Your Telegram ID: <code>{user_id}</code>\n"
-                "Share this ID with the administrator to request access.",
-                parse_mode="HTML",
-            )
-        return  # Stop processing
-
-
-async def require_auth(handler: Callable, event: Any, data: Dict[str, Any]) -> Any:
-    """Decorator-style middleware that requires authentication.
-
-    This is a stricter version that only allows authenticated users.
-    """
-    user_id = event.effective_user.id if event.effective_user else None
-    auth_manager = data.get("auth_manager")
-
-    if not auth_manager or not auth_manager.is_authenticated(user_id):
-        if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 Authentication required to use this command."
-            )
+        logger.warning("Authentication failed", user_id=user_id)
+        # Don't call next() — stops the middleware chain
         return
 
-    return await handler(event, data)
 
-
-async def admin_required(handler: Callable, event: Any, data: Dict[str, Any]) -> Any:
-    """Middleware that requires admin privileges.
-
-    Note: This is a placeholder - admin privileges would need to be
-    implemented in the authentication system.
-    """
-    user_id = event.effective_user.id if event.effective_user else None
-    auth_manager = data.get("auth_manager")
+async def require_auth(
+    body: dict, event: Any, context: dict, next: Callable
+) -> None:
+    """Stricter middleware that only allows authenticated users."""
+    user_id = _extract_user_id(body, event)
+    deps = context.get("deps", {})
+    auth_manager = deps.get("auth_manager")
 
     if not auth_manager or not auth_manager.is_authenticated(user_id):
-        if event.effective_message:
-            await event.effective_message.reply_text("🔒 Authentication required.")
+        return
+
+    context["user_id"] = user_id
+    await next()
+
+
+async def admin_required(
+    body: dict, event: Any, context: dict, next: Callable
+) -> None:
+    """Middleware that requires admin privileges."""
+    user_id = _extract_user_id(body, event)
+    deps = context.get("deps", {})
+    auth_manager = deps.get("auth_manager")
+
+    if not auth_manager or not auth_manager.is_authenticated(user_id):
         return
 
     session = auth_manager.get_session(user_id)
     if not session or not session.user_info:
-        if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 Session information unavailable."
-            )
         return
 
-    # Check for admin permissions (placeholder logic)
     permissions = session.user_info.get("permissions", [])
     if "admin" not in permissions:
-        if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 <b>Admin Access Required</b>\n\n"
-                "This command requires administrator privileges.",
-                parse_mode="HTML",
-            )
         return
 
-    return await handler(event, data)
+    context["user_id"] = user_id
+    await next()
+
+
+# Keep old name for backwards compatibility
+auth_middleware = slack_auth_middleware

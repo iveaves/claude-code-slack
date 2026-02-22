@@ -146,3 +146,16 @@ data/
 sessions/
 backups/
 uploads/
+
+# Claude Code / agent state
+.claude/
+.agents/
+
+# Local MCP & project config (contain secrets/personal paths)
+config/mcp.json
+config/projects.yaml
+
+# Local tooling
+uv.lock
+bin/
+test_scheduler.py

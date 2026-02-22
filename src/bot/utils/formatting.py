@@ -1,22 +1,25 @@
-"""Format bot responses for optimal display."""
+"""Format bot responses for optimal display in Slack."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
 from ...config.settings import Settings
-from .html_format import escape_html, markdown_to_telegram_html
+from .slack_format import escape_mrkdwn, markdown_to_slack_mrkdwn
 
 
 @dataclass
 class FormattedMessage:
-    """Represents a formatted message for Telegram."""
+    """Represents a formatted message for Slack.
+
+    Slack always uses mrkdwn for text formatting, so there is no
+    ``parse_mode`` field.  Interactive elements (buttons, menus) are
+    expressed via Block Kit *actions* blocks attached alongside the
+    message text.
+    """
 
     text: str
-    parse_mode: str = "HTML"
-    reply_markup: Optional[InlineKeyboardMarkup] = None
+    blocks: Optional[List[dict]] = field(default=None)
 
     def __len__(self) -> int:
         """Return length of message text."""
@@ -24,12 +27,12 @@ class FormattedMessage:
 
 
 class ResponseFormatter:
-    """Format Claude responses for Telegram display."""
+    """Format Claude responses for Slack display."""
 
     def __init__(self, settings: Settings):
         """Initialize formatter with settings."""
         self.settings = settings
-        self.max_message_length = 4000  # Telegram limit is 4096, leave some buffer
+        self.max_message_length = 3900  # Slack limit is 4000, leave some buffer
         self.max_code_block_length = (
             15000  # Max length for individual code blocks before splitting
         )
@@ -56,18 +59,16 @@ class ResponseFormatter:
 
         # Add context-aware quick actions to the last message
         if messages and self.settings.enable_quick_actions:
-            messages[-1].reply_markup = self._get_contextual_keyboard(context)
+            messages[-1].blocks = self._get_contextual_keyboard(context)
 
         return (
             messages
             if messages
-            else [FormattedMessage("<i>(No content to display)</i>")]
+            else [FormattedMessage("_(No content to display)_")]
         )
 
     def _should_use_semantic_chunking(self, text: str) -> bool:
         """Determine if semantic chunking is needed."""
-        # Use semantic chunking for complex content with multiple code blocks,
-        # file operations, or very long text
         code_block_count = text.count("```")
         has_file_operations = any(
             indicator in text
@@ -91,30 +92,30 @@ class ResponseFormatter:
     ) -> FormattedMessage:
         """Format error message with appropriate styling."""
         icon = {
-            "Error": "❌",
-            "Warning": "⚠️",
-            "Info": "ℹ️",
-            "Security": "🛡️",
-            "Rate Limit": "⏱️",
-        }.get(error_type, "❌")
+            "Error": ":x:",
+            "Warning": ":warning:",
+            "Info": ":information_source:",
+            "Security": ":shield:",
+            "Rate Limit": ":stopwatch:",
+        }.get(error_type, ":x:")
 
-        text = f"{icon} <b>{escape_html(error_type)}</b>\n\n{escape_html(error)}"
+        text = f"{icon} *{escape_mrkdwn(error_type)}*\n\n{escape_mrkdwn(error)}"
 
-        return FormattedMessage(text, parse_mode="HTML")
+        return FormattedMessage(text)
 
     def format_success_message(
         self, message: str, title: str = "Success"
     ) -> FormattedMessage:
         """Format success message with appropriate styling."""
-        text = f"✅ <b>{escape_html(title)}</b>\n\n{escape_html(message)}"
-        return FormattedMessage(text, parse_mode="HTML")
+        text = f":white_check_mark: *{escape_mrkdwn(title)}*\n\n{escape_mrkdwn(message)}"
+        return FormattedMessage(text)
 
     def format_info_message(
         self, message: str, title: str = "Info"
     ) -> FormattedMessage:
         """Format info message with appropriate styling."""
-        text = f"ℹ️ <b>{escape_html(title)}</b>\n\n{escape_html(message)}"
-        return FormattedMessage(text, parse_mode="HTML")
+        text = f":information_source: *{escape_mrkdwn(title)}*\n\n{escape_mrkdwn(message)}"
+        return FormattedMessage(text)
 
     def format_code_output(
         self, output: str, language: str = "", title: str = "Output"
@@ -123,25 +124,23 @@ class ResponseFormatter:
         if not output.strip():
             return [
                 FormattedMessage(
-                    f"📄 <b>{escape_html(title)}</b>\n\n<i>(empty output)</i>"
+                    f":page_facing_up: *{escape_mrkdwn(title)}*\n\n_(empty output)_"
                 )
             ]
 
-        escaped_output = escape_html(output)
-
         # Check if the code block is too long
-        if len(escaped_output) > self.max_code_block_length:
-            escaped_output = (
-                escape_html(output[: self.max_code_block_length - 100])
+        if len(output) > self.max_code_block_length:
+            output = (
+                output[: self.max_code_block_length - 100]
                 + "\n... (output truncated)"
             )
 
         if language:
-            code_block = f'<pre><code class="language-{escape_html(language)}">{escaped_output}</code></pre>'
+            code_block = f"```{language}\n{output}```"
         else:
-            code_block = f"<pre><code>{escaped_output}</code></pre>"
+            code_block = f"```\n{output}```"
 
-        text = f"📄 <b>{escape_html(title)}</b>\n\n{code_block}"
+        text = f":page_facing_up: *{escape_mrkdwn(title)}*\n\n{code_block}"
 
         return self._split_message(text)
 
@@ -149,41 +148,41 @@ class ResponseFormatter:
         self, files: List[str], directory: str = ""
     ) -> FormattedMessage:
         """Format file listing with appropriate icons."""
-        safe_dir = escape_html(directory)
+        safe_dir = escape_mrkdwn(directory)
         if not files:
-            text = f"📂 <b>{safe_dir}</b>\n\n<i>(empty directory)</i>"
+            text = f":open_file_folder: *{safe_dir}*\n\n_(empty directory)_"
         else:
             file_lines = []
-            for file in files[:50]:  # Limit to 50 items
-                safe_file = escape_html(file)
-                if file.endswith("/"):
-                    file_lines.append(f"📁 {safe_file}")
+            for f in files[:50]:  # Limit to 50 items
+                safe_file = escape_mrkdwn(f)
+                if f.endswith("/"):
+                    file_lines.append(f":file_folder: {safe_file}")
                 else:
-                    file_lines.append(f"📄 {safe_file}")
+                    file_lines.append(f":page_facing_up: {safe_file}")
 
             file_text = "\n".join(file_lines)
             if len(files) > 50:
-                file_text += f"\n\n<i>... and {len(files) - 50} more items</i>"
+                file_text += f"\n\n_... and {len(files) - 50} more items_"
 
-            text = f"📂 <b>{safe_dir}</b>\n\n{file_text}"
+            text = f":open_file_folder: *{safe_dir}*\n\n{file_text}"
 
-        return FormattedMessage(text, parse_mode="HTML")
+        return FormattedMessage(text)
 
     def format_progress_message(
         self, message: str, percentage: Optional[float] = None
     ) -> FormattedMessage:
         """Format progress message with optional progress bar."""
-        safe_msg = escape_html(message)
+        safe_msg = escape_mrkdwn(message)
         if percentage is not None:
             # Create simple progress bar
             filled = int(percentage / 10)
             empty = 10 - filled
-            progress_bar = "▓" * filled + "░" * empty
-            text = f"🔄 <b>{safe_msg}</b>\n\n{progress_bar} {percentage:.0f}%"
+            progress_bar = "\u2593" * filled + "\u2591" * empty
+            text = f":arrows_counterclockwise: *{safe_msg}*\n\n{progress_bar} {percentage:.0f}%"
         else:
-            text = f"🔄 <b>{safe_msg}</b>"
+            text = f":arrows_counterclockwise: *{safe_msg}*"
 
-        return FormattedMessage(text, parse_mode="HTML")
+        return FormattedMessage(text)
 
     def _semantic_chunk(self, text: str, context: Optional[dict]) -> List[dict]:
         """Split text into semantic chunks based on content type."""
@@ -211,7 +210,7 @@ class ResponseFormatter:
         """Identify different content types in the text."""
         sections = []
         lines = text.split("\n")
-        current_section = {"type": "text", "content": "", "start_line": 0}
+        current_section: dict = {"type": "text", "content": "", "start_line": 0}
         in_code_block = False
 
         for i, line in enumerate(lines):
@@ -382,17 +381,17 @@ class ResponseFormatter:
             # Format code blocks with proper styling
             if chunk.get("format") == "split":
                 title = (
-                    "📄 <b>Code (continued)</b>"
+                    ":page_facing_up: *Code (continued)*"
                     if "continued" in content
-                    else "📄 <b>Code</b>"
+                    else ":page_facing_up: *Code*"
                 )
             else:
-                title = "📄 <b>Code</b>"
+                title = ":page_facing_up: *Code*"
 
             text = f"{title}\n\n{content}"
 
         elif chunk_type == "file_operations":
-            text = f"📁 <b>File Operations</b>\n\n{content}"
+            text = f":file_folder: *File Operations*\n\n{content}"
 
         elif chunk_type == "explanation":
             text = content
@@ -405,50 +404,71 @@ class ResponseFormatter:
 
     def _get_contextual_keyboard(
         self, context: Optional[dict]
-    ) -> Optional[InlineKeyboardMarkup]:
-        """Get context-aware quick action keyboard."""
+    ) -> Optional[List[dict]]:
+        """Get context-aware quick action keyboard as Block Kit actions."""
         if not context:
             return self._get_quick_actions_keyboard()
 
-        buttons = []
+        elements: List[dict] = []
 
         # Add context-specific buttons
         if context.get("has_code"):
-            buttons.append(
-                [InlineKeyboardButton("💾 Save Code", callback_data="save_code")]
-            )
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":floppy_disk: Save Code"},
+                "action_id": "save_code",
+                "value": "save_code",
+            })
 
         if context.get("has_file_operations"):
-            buttons.append(
-                [InlineKeyboardButton("📁 Show Files", callback_data="show_files")]
-            )
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":file_folder: Show Files"},
+                "action_id": "show_files",
+                "value": "show_files",
+            })
 
         if context.get("has_errors"):
-            buttons.append([InlineKeyboardButton("🔧 Debug", callback_data="debug")])
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":wrench: Debug"},
+                "action_id": "debug",
+                "value": "debug",
+            })
 
         # Add default actions
-        default_buttons = [
-            [InlineKeyboardButton("🔄 Continue", callback_data="continue")],
-            [InlineKeyboardButton("💡 Explain", callback_data="explain")],
-        ]
-        buttons.extend(default_buttons)
+        elements.append({
+            "type": "button",
+            "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Continue"},
+            "action_id": "continue",
+            "value": "continue",
+        })
+        elements.append({
+            "type": "button",
+            "text": {"type": "plain_text", "text": ":bulb: Explain"},
+            "action_id": "explain",
+            "value": "explain",
+        })
 
-        return InlineKeyboardMarkup(buttons) if buttons else None
+        if not elements:
+            return None
+
+        return [{"type": "actions", "elements": elements}]
 
     def _clean_text(self, text: str) -> str:
-        """Clean text for Telegram display."""
+        """Clean text for Slack display."""
         # Remove excessive whitespace
         text = re.sub(r"\n{3,}", "\n\n", text)
 
-        # Convert markdown to Telegram HTML
-        text = markdown_to_telegram_html(text)
+        # Convert markdown to Slack mrkdwn
+        text = markdown_to_slack_mrkdwn(text)
 
         return text.strip()
 
     def _format_code_blocks(self, text: str) -> str:
-        """Ensure code blocks are properly formatted for Telegram.
+        """Ensure code blocks are properly formatted for Slack.
 
-        With HTML mode, markdown_to_telegram_html already handles code blocks.
+        markdown_to_slack_mrkdwn already handles code blocks.
         This method now just truncates oversized code blocks.
         """
 
@@ -458,13 +478,11 @@ class ResponseFormatter:
                 # Re-extract and truncate the inner content
                 inner = m.group(1)
                 truncated = inner[: self.max_code_block_length - 80]
-                return (
-                    f"<pre><code>{escape_html(truncated)}\n... (truncated)</code></pre>"
-                )
+                return f"```\n{truncated}\n... (truncated)```"
             return full
 
         return re.sub(
-            r"<pre><code[^>]*>(.*?)</code></pre>",
+            r"```(?:\w+)?\n(.*?)```",
             _truncate_code,
             text,
             flags=re.DOTALL,
@@ -485,19 +503,22 @@ class ResponseFormatter:
         for line in lines:
             line_length = len(line) + 1  # +1 for newline
 
-            # Track HTML <pre> code block state
-            if "<pre>" in line or "<pre><code" in line:
-                in_code_block = True
-            if "</pre>" in line:
-                in_code_block = False
+            # Track ``` code block state
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if not in_code_block:
+                    in_code_block = True
+                else:
+                    in_code_block = False
 
             # If this is a very long line that exceeds limit by itself, split it
             if line_length > self.max_message_length:
-                chunks = []
-                for i in range(0, len(line), self.max_message_length - 100):
-                    chunks.append(line[i : i + self.max_message_length - 100])
+                chunk_size = self.max_message_length - 100
+                sub_chunks = []
+                for i in range(0, len(line), chunk_size):
+                    sub_chunks.append(line[i : i + chunk_size])
 
-                for chunk in chunks:
+                for chunk in sub_chunks:
                     chunk_length = len(chunk) + 1
 
                     if (
@@ -505,14 +526,14 @@ class ResponseFormatter:
                         and current_lines
                     ):
                         if in_code_block:
-                            current_lines.append("</code></pre>")
+                            current_lines.append("```")
                         messages.append(FormattedMessage("\n".join(current_lines)))
 
                         current_lines = []
                         current_length = 0
                         if in_code_block:
-                            current_lines.append("<pre><code>")
-                            current_length = 12
+                            current_lines.append("```")
+                            current_length = 4
 
                     current_lines.append(chunk)
                     current_length += chunk_length
@@ -521,7 +542,7 @@ class ResponseFormatter:
             # Check if adding this line would exceed the limit
             if current_length + line_length > self.max_message_length and current_lines:
                 if in_code_block:
-                    current_lines.append("</code></pre>")
+                    current_lines.append("```")
 
                 messages.append(FormattedMessage("\n".join(current_lines)))
 
@@ -529,8 +550,8 @@ class ResponseFormatter:
                 current_length = 0
 
                 if in_code_block:
-                    current_lines.append("<pre><code>")
-                    current_length = 12
+                    current_lines.append("```")
+                    current_length = 4
 
             current_lines.append(line)
             current_length += line_length
@@ -541,57 +562,114 @@ class ResponseFormatter:
 
         return messages
 
-    def _get_quick_actions_keyboard(self) -> InlineKeyboardMarkup:
-        """Get quick actions inline keyboard."""
-        keyboard = [
-            [
-                InlineKeyboardButton("🧪 Test", callback_data="quick:test"),
-                InlineKeyboardButton("📦 Install", callback_data="quick:install"),
-                InlineKeyboardButton("🎨 Format", callback_data="quick:format"),
-            ],
-            [
-                InlineKeyboardButton("🔍 Find TODOs", callback_data="quick:find_todos"),
-                InlineKeyboardButton("🔨 Build", callback_data="quick:build"),
-                InlineKeyboardButton("📊 Git Status", callback_data="quick:git_status"),
-            ],
+    def _get_quick_actions_keyboard(self) -> List[dict]:
+        """Get quick actions as Block Kit actions blocks."""
+        return [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":test_tube: Test"},
+                        "action_id": "quick_test",
+                        "value": "test",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":package: Install"},
+                        "action_id": "quick_install",
+                        "value": "install",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":art: Format"},
+                        "action_id": "quick_format",
+                        "value": "format",
+                    },
+                ],
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":mag: Find TODOs"},
+                        "action_id": "quick_find_todos",
+                        "value": "find_todos",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":hammer: Build"},
+                        "action_id": "quick_build",
+                        "value": "build",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":bar_chart: Git Status"},
+                        "action_id": "quick_git_status",
+                        "value": "git_status",
+                    },
+                ],
+            },
         ]
-
-        return InlineKeyboardMarkup(keyboard)
 
     def create_confirmation_keyboard(
         self, confirm_data: str, cancel_data: str = "confirm:no"
-    ) -> InlineKeyboardMarkup:
-        """Create a confirmation keyboard."""
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Yes", callback_data=confirm_data),
-                InlineKeyboardButton("❌ No", callback_data=cancel_data),
-            ]
+    ) -> List[dict]:
+        """Create a confirmation keyboard as Block Kit actions."""
+        return [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":white_check_mark: Yes"},
+                        "action_id": f"confirm_{confirm_data}",
+                        "value": confirm_data,
+                        "style": "primary",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":x: No"},
+                        "action_id": f"cancel_{cancel_data}",
+                        "value": cancel_data,
+                        "style": "danger",
+                    },
+                ],
+            }
         ]
-        return InlineKeyboardMarkup(keyboard)
 
-    def create_navigation_keyboard(self, options: List[tuple]) -> InlineKeyboardMarkup:
-        """Create navigation keyboard from options list.
+    def create_navigation_keyboard(self, options: List[tuple]) -> List[dict]:
+        """Create navigation keyboard from options list as Block Kit actions.
 
         Args:
             options: List of (text, callback_data) tuples
         """
-        keyboard = []
-        current_row = []
+        elements: List[dict] = []
+        actions_blocks: List[dict] = []
 
         for text, callback_data in options:
-            current_row.append(InlineKeyboardButton(text, callback_data=callback_data))
+            # Sanitize callback_data into a valid action_id (alphanumeric + underscores)
+            action_id = re.sub(r"[^a-zA-Z0-9_]", "_", callback_data)
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": text},
+                "action_id": action_id,
+                "value": callback_data,
+            })
 
-            # Create rows of 2 buttons
-            if len(current_row) == 2:
-                keyboard.append(current_row)
-                current_row = []
+            # Slack allows up to 25 elements per actions block, but
+            # for visual clarity we group in rows of 2 (matching the
+            # original Telegram layout).
+            if len(elements) == 2:
+                actions_blocks.append({"type": "actions", "elements": elements})
+                elements = []
 
-        # Add remaining button if any
-        if current_row:
-            keyboard.append(current_row)
+        # Add remaining buttons
+        if elements:
+            actions_blocks.append({"type": "actions", "elements": elements})
 
-        return InlineKeyboardMarkup(keyboard)
+        return actions_blocks
 
 
 class ProgressIndicator:
@@ -601,8 +679,8 @@ class ProgressIndicator:
     def create_bar(
         percentage: float,
         length: int = 10,
-        filled_char: str = "▓",
-        empty_char: str = "░",
+        filled_char: str = "\u2593",
+        empty_char: str = "\u2591",
     ) -> str:
         """Create a progress bar."""
         filled = int((percentage / 100) * length)
@@ -612,7 +690,7 @@ class ProgressIndicator:
     @staticmethod
     def create_spinner(step: int) -> str:
         """Create a spinning indicator."""
-        spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        spinners = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
         return spinners[step % len(spinners)]
 
     @staticmethod
@@ -668,12 +746,11 @@ class CodeHighlighter:
 
     @classmethod
     def format_code(cls, code: str, language: str = "", filename: str = "") -> str:
-        """Format code with language detection, using HTML tags."""
+        """Format code with language detection, using Slack code blocks."""
         if not language and filename:
             language = cls.detect_language(filename)
 
-        escaped_code = escape_html(code)
         if language:
-            return f'<pre><code class="language-{escape_html(language)}">{escaped_code}</code></pre>'
+            return f"```{language}\n{code}```"
         else:
-            return f"<pre><code>{escaped_code}</code></pre>"
+            return f"```\n{code}```"

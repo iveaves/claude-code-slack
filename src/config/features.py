@@ -47,11 +47,6 @@ class FeatureFlags:
         )
 
     @property
-    def webhook_enabled(self) -> bool:
-        """Check if webhook mode is enabled."""
-        return self.settings.webhook_url is not None
-
-    @property
     def development_features_enabled(self) -> bool:
         """Check if development features are enabled."""
         return self.settings.development_mode
@@ -80,7 +75,6 @@ class FeatureFlags:
             "quick_actions": self.quick_actions_enabled,
             "telemetry": self.telemetry_enabled,
             "token_auth": self.token_auth_enabled,
-            "webhook": self.webhook_enabled,
             "development": self.development_features_enabled,
             "api_server": self.api_server_enabled,
             "scheduler": self.scheduler_enabled,
@@ -103,8 +97,6 @@ class FeatureFlags:
             features.append("telemetry")
         if self.token_auth_enabled:
             features.append("token_auth")
-        if self.webhook_enabled:
-            features.append("webhook")
         if self.development_features_enabled:
             features.append("development")
         if self.api_server_enabled:

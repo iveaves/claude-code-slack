@@ -1,11 +1,15 @@
-"""Custom exceptions for Claude Code Telegram Bot."""
+"""Custom exceptions for Claude Code Slack Bot."""
 
 
-class ClaudeCodeTelegramError(Exception):
-    """Base exception for Claude Code Telegram Bot."""
+class ClaudeCodeSlackError(Exception):
+    """Base exception for Claude Code Slack Bot."""
 
 
-class ConfigurationError(ClaudeCodeTelegramError):
+# Keep old name as alias for any remaining references during migration
+ClaudeCodeTelegramError = ClaudeCodeSlackError
+
+
+class ConfigurationError(ClaudeCodeSlackError):
     """Configuration-related errors."""
 
 
@@ -17,7 +21,7 @@ class InvalidConfigError(ConfigurationError):
     """Configuration is invalid."""
 
 
-class SecurityError(ClaudeCodeTelegramError):
+class SecurityError(ClaudeCodeSlackError):
     """Security-related errors."""
 
 
@@ -33,7 +37,7 @@ class DirectoryTraversalError(SecurityError):
     """Directory traversal attempt detected."""
 
 
-class ClaudeError(ClaudeCodeTelegramError):
+class ClaudeError(ClaudeCodeSlackError):
     """Claude Code-related errors."""
 
 
@@ -49,7 +53,7 @@ class ClaudeParsingError(ClaudeError):
     """Failed to parse Claude Code output."""
 
 
-class StorageError(ClaudeCodeTelegramError):
+class StorageError(ClaudeCodeSlackError):
     """Storage-related errors."""
 
 
@@ -61,15 +65,19 @@ class DataIntegrityError(StorageError):
     """Data integrity check failed."""
 
 
-class TelegramError(ClaudeCodeTelegramError):
-    """Telegram API-related errors."""
+class SlackError(ClaudeCodeSlackError):
+    """Slack API-related errors."""
 
 
-class MessageTooLongError(TelegramError):
-    """Message exceeds Telegram's length limit."""
+# Keep old name as alias
+TelegramError = SlackError
 
 
-class RateLimitError(TelegramError):
+class MessageTooLongError(SlackError):
+    """Message exceeds Slack's length limit."""
+
+
+class RateLimitError(SlackError):
     """Rate limit exceeded."""
 
 

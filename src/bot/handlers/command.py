@@ -1,18 +1,16 @@
-"""Command handlers for bot operations."""
+"""Command handlers for Slack Bolt bot operations."""
 
 from pathlib import Path
 from typing import Optional
 
 import structlog
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
 
 from ...claude.facade import ClaudeIntegration
 from ...config.settings import Settings
 from ...projects import PrivateTopicsUnavailableError, load_project_registry
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
-from ..utils.html_format import escape_html
+from ..utils.slack_format import escape_mrkdwn
 
 logger = structlog.get_logger()
 
@@ -26,75 +24,73 @@ def _is_within_root(path: Path, root: Path) -> bool:
         return False
 
 
-def _get_thread_project_root(
-    settings: Settings, context: ContextTypes.DEFAULT_TYPE
-) -> Optional[Path]:
-    """Get thread project root when strict thread mode is active."""
+def _get_user_state(deps: dict, user_id: str) -> dict:
+    """Get per-user state dict from deps, creating if needed."""
+    user_states = deps.setdefault("_user_states", {})
+    return user_states.setdefault(user_id, {})
+
+
+def _get_channel_project_root(settings: Settings, user_state: dict) -> Optional[Path]:
+    """Get channel project root when strict channel mode is active."""
     if not settings.enable_project_threads:
         return None
-    thread_context = context.user_data.get("_thread_context")
-    if not thread_context:
+    channel_context = user_state.get("_channel_context")
+    if not channel_context:
         return None
-    return Path(thread_context["project_root"]).resolve()
+    return Path(channel_context["project_root"]).resolve()
 
 
-def _is_private_chat(update: Update) -> bool:
-    """Return True when update is from a private chat."""
-    chat = update.effective_chat
-    return bool(chat and getattr(chat, "type", "") == "private")
-
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_command(ack, say, command, client, context) -> None:
     """Handle /start command."""
-    user = update.effective_user
-    settings: Settings = context.bot_data["settings"]
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
-    manager = context.bot_data.get("project_threads_manager")
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    audit_logger: AuditLogger = deps.get("audit_logger")
+    manager = deps.get("project_threads_manager")
     sync_section = ""
 
     if settings.enable_project_threads and settings.project_threads_mode == "private":
-        if not _is_private_chat(update):
-            await update.message.reply_text(
-                "🚫 <b>Private Topics Mode</b>\n\n"
-                "Use this bot in a private chat and run <code>/start</code> there.",
-                parse_mode="HTML",
+        # In Slack, "private" mode means DM-only
+        channel_info = await client.conversations_info(channel=command["channel_id"])
+        is_dm = channel_info["channel"].get("is_im", False)
+        if not is_dm:
+            await say(
+                ":no_entry_sign: *Private Channels Mode*\n\n"
+                "Use this bot in a direct message and run `/start` there."
             )
             return
 
     if (
         settings.enable_project_threads
         and settings.project_threads_mode == "private"
-        and _is_private_chat(update)
     ):
         if manager is None:
-            await update.message.reply_text(
-                "❌ <b>Project thread mode is misconfigured</b>\n\n"
-                "Thread manager is not initialized.",
-                parse_mode="HTML",
+            await say(
+                ":x: *Project channel mode is misconfigured*\n\n"
+                "Channel manager is not initialized."
             )
             return
 
         try:
             sync_result = await manager.sync_topics(
-                context.bot,
-                chat_id=update.effective_chat.id,
+                client,
+                chat_id=command["channel_id"],
             )
             sync_section = (
-                "\n\n🧵 <b>Project Topics Synced</b>\n"
-                f"• Created: <b>{sync_result.created}</b>\n"
-                f"• Reused: <b>{sync_result.reused}</b>\n"
-                f"• Renamed: <b>{sync_result.renamed}</b>\n"
-                f"• Failed: <b>{sync_result.failed}</b>\n\n"
-                "Use a project topic thread to start coding."
+                "\n\n:thread: *Project Channels Synced*\n"
+                f"- Created: *{sync_result.created}*\n"
+                f"- Reused: *{sync_result.reused}*\n"
+                f"- Renamed: *{sync_result.renamed}*\n"
+                f"- Failed: *{sync_result.failed}*\n\n"
+                "Use a project channel to start coding."
             )
         except PrivateTopicsUnavailableError:
-            await update.message.reply_text(
-                manager.private_topics_unavailable_message(),
-                parse_mode="HTML",
-            )
+            await say(manager.private_topics_unavailable_message())
             if audit_logger:
                 await audit_logger.log_command(
-                    user_id=user.id,
+                    user_id=user_id,
                     command="start",
                     args=[],
                     success=False,
@@ -102,166 +98,198 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
         except Exception as e:
             sync_section = (
-                "\n\n⚠️ <b>Topic Sync Warning</b>\n"
-                f"{escape_html(str(e))}\n\n"
-                "Run <code>/sync_threads</code> to retry."
+                "\n\n:warning: *Channel Sync Warning*\n"
+                f"{escape_mrkdwn(str(e))}\n\n"
+                "Run `/sync_channels` to retry."
             )
 
     welcome_message = (
-        f"👋 Welcome to Claude Code Telegram Bot, {escape_html(user.first_name)}!\n\n"
-        f"🤖 I help you access Claude Code remotely through Telegram.\n\n"
-        f"<b>Available Commands:</b>\n"
-        f"• <code>/help</code> - Show detailed help\n"
-        f"• <code>/new</code> - Start a new Claude session\n"
-        f"• <code>/ls</code> - List files in current directory\n"
-        f"• <code>/cd &lt;dir&gt;</code> - Change directory\n"
-        f"• <code>/projects</code> - Show available projects\n"
-        f"• <code>/status</code> - Show session status\n"
-        f"• <code>/actions</code> - Show quick actions\n"
-        f"• <code>/git</code> - Git repository commands\n\n"
-        f"<b>Quick Start:</b>\n"
-        f"1. Use <code>/projects</code> to see available projects\n"
-        f"2. Use <code>/cd &lt;project&gt;</code> to navigate to a project\n"
+        f":wave: Welcome to Claude Code Slack Bot, <@{user_id}>!\n\n"
+        f":robot_face: I help you access Claude Code remotely through Slack.\n\n"
+        f"*Available Commands:*\n"
+        f"- `/help` - Show detailed help\n"
+        f"- `/new` - Start a new Claude session\n"
+        f"- `/ls` - List files in current directory\n"
+        f"- `/cd <dir>` - Change directory\n"
+        f"- `/projects` - Show available projects\n"
+        f"- `/status` - Show session status\n"
+        f"- `/actions` - Show quick actions\n"
+        f"- `/git` - Git repository commands\n\n"
+        f"*Quick Start:*\n"
+        f"1. Use `/projects` to see available projects\n"
+        f"2. Use `/cd <project>` to navigate to a project\n"
         f"3. Send any message to start coding with Claude!\n\n"
-        f"🔒 Your access is secured and all actions are logged.\n"
-        f"📊 Use <code>/status</code> to check your usage limits."
+        f":lock: Your access is secured and all actions are logged.\n"
+        f":bar_chart: Use `/status` to check your usage limits."
         f"{sync_section}"
     )
 
-    # Add quick action buttons
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📁 Show Projects", callback_data="action:show_projects"
-            ),
-            InlineKeyboardButton("❓ Get Help", callback_data="action:help"),
-        ],
-        [
-            InlineKeyboardButton("🆕 New Session", callback_data="action:new_session"),
-            InlineKeyboardButton("📊 Check Status", callback_data="action:status"),
-        ],
+    # Add quick action buttons using Block Kit
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": welcome_message},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":file_folder: Show Projects"},
+                    "action_id": "action:show_projects",
+                    "value": "show_projects",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":question: Get Help"},
+                    "action_id": "action:help",
+                    "value": "help",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":new: New Session"},
+                    "action_id": "action:new_session",
+                    "value": "new_session",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":bar_chart: Check Status"},
+                    "action_id": "action:status",
+                    "value": "status",
+                },
+            ],
+        },
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        welcome_message, parse_mode="HTML", reply_markup=reply_markup
-    )
+    await say(text=welcome_message, blocks=blocks)
 
     # Log command
     if audit_logger:
         await audit_logger.log_command(
-            user_id=user.id, command="start", args=[], success=True
+            user_id=user_id, command="start", args=[], success=True
         )
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(ack, say, command, client, context) -> None:
     """Handle /help command."""
+    await ack()
+
     help_text = (
-        "🤖 <b>Claude Code Telegram Bot Help</b>\n\n"
-        "<b>Navigation Commands:</b>\n"
-        "• <code>/ls</code> - List files and directories\n"
-        "• <code>/cd &lt;directory&gt;</code> - Change to directory\n"
-        "• <code>/pwd</code> - Show current directory\n"
-        "• <code>/projects</code> - Show available projects\n\n"
-        "<b>Session Commands:</b>\n"
-        "• <code>/new</code> - Clear context and start a fresh session\n"
-        "• <code>/continue [message]</code> - Explicitly continue last session\n"
-        "• <code>/end</code> - End current session and clear context\n"
-        "• <code>/status</code> - Show session and usage status\n"
-        "• <code>/export</code> - Export session history\n"
-        "• <code>/actions</code> - Show context-aware quick actions\n"
-        "• <code>/git</code> - Git repository information\n\n"
-        "<b>Session Behavior:</b>\n"
-        "• Sessions are automatically maintained per project directory\n"
-        "• Switching directories with <code>/cd</code> resumes the session for that project\n"
-        "• Use <code>/new</code> or <code>/end</code> to explicitly clear session context\n"
-        "• Sessions persist across bot restarts\n\n"
-        "<b>Usage Examples:</b>\n"
-        "• <code>cd myproject</code> - Enter project directory\n"
-        "• <code>ls</code> - See what's in current directory\n"
-        "• <code>Create a simple Python script</code> - Ask Claude to code\n"
-        "• Send a file to have Claude review it\n\n"
-        "<b>File Operations:</b>\n"
-        "• Send text files (.py, .js, .md, etc.) for review\n"
-        "• Claude can read, modify, and create files\n"
-        "• All file operations are within your approved directory\n\n"
-        "<b>Security Features:</b>\n"
-        "• 🔒 Path traversal protection\n"
-        "• ⏱️ Rate limiting to prevent abuse\n"
-        "• 📊 Usage tracking and limits\n"
-        "• 🛡️ Input validation and sanitization\n\n"
-        "<b>Tips:</b>\n"
-        "• Use specific, clear requests for best results\n"
-        "• Check <code>/status</code> to monitor your usage\n"
-        "• Use quick action buttons when available\n"
-        "• File uploads are automatically processed by Claude\n\n"
+        ":robot_face: *Claude Code Slack Bot Help*\n\n"
+        "*Navigation Commands:*\n"
+        "- `/ls` - List files and directories\n"
+        "- `/cd <directory>` - Change to directory\n"
+        "- `/pwd` - Show current directory\n"
+        "- `/projects` - Show available projects\n\n"
+        "*Session Commands:*\n"
+        "- `/new` - Clear context and start a fresh session\n"
+        "- `/continue [message]` - Explicitly continue last session\n"
+        "- `/end` - End current session and clear context\n"
+        "- `/status` - Show session and usage status\n"
+        "- `/export` - Export session history\n"
+        "- `/actions` - Show context-aware quick actions\n"
+        "- `/git` - Git repository information\n\n"
+        "*Session Behavior:*\n"
+        "- Sessions are automatically maintained per project directory\n"
+        "- Switching directories with `/cd` resumes the session for that project\n"
+        "- Use `/new` or `/end` to explicitly clear session context\n"
+        "- Sessions persist across bot restarts\n\n"
+        "*Usage Examples:*\n"
+        "- `cd myproject` - Enter project directory\n"
+        "- `ls` - See what's in current directory\n"
+        "- `Create a simple Python script` - Ask Claude to code\n"
+        "- Send a file to have Claude review it\n\n"
+        "*File Operations:*\n"
+        "- Send text files (.py, .js, .md, etc.) for review\n"
+        "- Claude can read, modify, and create files\n"
+        "- All file operations are within your approved directory\n\n"
+        "*Security Features:*\n"
+        "- :lock: Path traversal protection\n"
+        "- :stopwatch: Rate limiting to prevent abuse\n"
+        "- :bar_chart: Usage tracking and limits\n"
+        "- :shield: Input validation and sanitization\n\n"
+        "*Tips:*\n"
+        "- Use specific, clear requests for best results\n"
+        "- Check `/status` to monitor your usage\n"
+        "- Use quick action buttons when available\n"
+        "- File uploads are automatically processed by Claude\n\n"
         "Need more help? Contact your administrator."
     )
 
-    await update.message.reply_text(help_text, parse_mode="HTML")
+    await say(help_text)
 
 
-async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Synchronize project topics in the configured forum chat."""
-    settings: Settings = context.bot_data["settings"]
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
-    user_id = update.effective_user.id
+async def sync_channels(ack, say, command, client, context) -> None:
+    """Synchronize project channels in the workspace."""
+    await ack()
+
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    audit_logger: AuditLogger = deps.get("audit_logger")
+    user_id = command["user_id"]
 
     if not settings.enable_project_threads:
-        await update.message.reply_text(
-            "ℹ️ <b>Project thread mode is disabled.</b>", parse_mode="HTML"
-        )
+        await say(":information_source: *Project channel mode is disabled.*")
         return
 
-    manager = context.bot_data.get("project_threads_manager")
+    manager = deps.get("project_threads_manager")
     if not manager:
-        await update.message.reply_text(
-            "❌ <b>Project thread manager not initialized.</b>", parse_mode="HTML"
-        )
+        await say(":x: *Project channel manager not initialized.*")
         return
 
-    status_msg = await update.message.reply_text(
-        "🔄 <b>Syncing project topics...</b>", parse_mode="HTML"
-    )
+    status_msg = await say(":arrows_counterclockwise: *Syncing project channels...*")
+    status_ts = status_msg["ts"]
+    channel_id = command["channel_id"]
 
     if settings.project_threads_mode == "private":
-        if not _is_private_chat(update):
-            await status_msg.edit_text(
-                "❌ <b>Private Thread Mode</b>\n\n"
-                "Run <code>/sync_threads</code> in your private chat with the bot.",
-                parse_mode="HTML",
+        channel_info = await client.conversations_info(channel=channel_id)
+        is_dm = channel_info["channel"].get("is_im", False)
+        if not is_dm:
+            await client.chat_update(
+                channel=channel_id,
+                ts=status_ts,
+                text=(
+                    ":x: *Private Channel Mode*\n\n"
+                    "Run `/sync_channels` in your direct message with the bot."
+                ),
             )
             return
-        target_chat_id = update.effective_chat.id
+        target_chat_id = channel_id
     else:
         if settings.project_threads_chat_id is None:
-            await status_msg.edit_text(
-                "❌ <b>Group Thread Mode Misconfigured</b>\n\n"
-                "Set <code>PROJECT_THREADS_CHAT_ID</code> first.",
-                parse_mode="HTML",
+            await client.chat_update(
+                channel=channel_id,
+                ts=status_ts,
+                text=(
+                    ":x: *Group Channel Mode Misconfigured*\n\n"
+                    "Set `PROJECT_THREADS_CHAT_ID` first."
+                ),
             )
             return
-        if (
-            not update.effective_chat
-            or update.effective_chat.id != settings.project_threads_chat_id
-        ):
-            await status_msg.edit_text(
-                "❌ <b>Group Thread Mode</b>\n\n"
-                "Run <code>/sync_threads</code> in the configured project threads group.",
-                parse_mode="HTML",
+        if channel_id != settings.project_threads_chat_id:
+            await client.chat_update(
+                channel=channel_id,
+                ts=status_ts,
+                text=(
+                    ":x: *Group Channel Mode*\n\n"
+                    "Run `/sync_channels` in the configured project channels group."
+                ),
             )
             return
         target_chat_id = settings.project_threads_chat_id
 
     try:
         if not settings.projects_config_path:
-            await status_msg.edit_text(
-                "❌ <b>Project thread mode is misconfigured</b>\n\n"
-                "Set <code>PROJECTS_CONFIG_PATH</code> to a valid YAML file.",
-                parse_mode="HTML",
+            await client.chat_update(
+                channel=channel_id,
+                ts=status_ts,
+                text=(
+                    ":x: *Project channel mode is misconfigured*\n\n"
+                    "Set `PROJECTS_CONFIG_PATH` to a valid YAML file."
+                ),
             )
             if audit_logger:
-                await audit_logger.log_command(user_id, "sync_threads", [], False)
+                await audit_logger.log_command(user_id, "sync_channels", [], False)
             return
 
         registry = load_project_registry(
@@ -269,129 +297,153 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             approved_directory=settings.approved_directory,
         )
         manager.registry = registry
-        context.bot_data["project_registry"] = registry
+        deps["project_registry"] = registry
 
-        result = await manager.sync_topics(context.bot, chat_id=target_chat_id)
-        await status_msg.edit_text(
-            "✅ <b>Project topic sync complete</b>\n\n"
-            f"• Created: <b>{result.created}</b>\n"
-            f"• Reused: <b>{result.reused}</b>\n"
-            f"• Renamed: <b>{result.renamed}</b>\n"
-            f"• Reopened: <b>{result.reopened}</b>\n"
-            f"• Closed: <b>{result.closed}</b>\n"
-            f"• Deactivated: <b>{result.deactivated}</b>\n"
-            f"• Failed: <b>{result.failed}</b>",
-            parse_mode="HTML",
+        result = await manager.sync_topics(client, chat_id=target_chat_id)
+        await client.chat_update(
+            channel=channel_id,
+            ts=status_ts,
+            text=(
+                ":white_check_mark: *Project channel sync complete*\n\n"
+                f"- Created: *{result.created}*\n"
+                f"- Reused: *{result.reused}*\n"
+                f"- Renamed: *{result.renamed}*\n"
+                f"- Reopened: *{result.reopened}*\n"
+                f"- Closed: *{result.closed}*\n"
+                f"- Deactivated: *{result.deactivated}*\n"
+                f"- Failed: *{result.failed}*"
+            ),
         )
         if audit_logger:
-            await audit_logger.log_command(user_id, "sync_threads", [], True)
+            await audit_logger.log_command(user_id, "sync_channels", [], True)
     except PrivateTopicsUnavailableError:
-        await status_msg.edit_text(
-            manager.private_topics_unavailable_message(),
-            parse_mode="HTML",
+        await client.chat_update(
+            channel=channel_id,
+            ts=status_ts,
+            text=manager.private_topics_unavailable_message(),
         )
         if audit_logger:
-            await audit_logger.log_command(user_id, "sync_threads", [], False)
+            await audit_logger.log_command(user_id, "sync_channels", [], False)
     except Exception as e:
-        await status_msg.edit_text(
-            f"❌ <b>Project topic sync failed</b>\n\n{escape_html(str(e))}",
-            parse_mode="HTML",
+        await client.chat_update(
+            channel=channel_id,
+            ts=status_ts,
+            text=f":x: *Project channel sync failed*\n\n{escape_mrkdwn(str(e))}",
         )
         if audit_logger:
-            await audit_logger.log_command(user_id, "sync_threads", [], False)
+            await audit_logger.log_command(user_id, "sync_channels", [], False)
 
 
-async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def new_session(ack, say, command, client, context) -> None:
     """Handle /new command - explicitly starts a fresh session, clearing previous context."""
-    settings: Settings = context.bot_data["settings"]
+    await ack()
+
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    user_id = command["user_id"]
+    user_state = _get_user_state(deps, user_id)
 
     # Get current directory (default to approved directory)
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = user_state.get("current_directory", settings.approved_directory)
     relative_path = current_dir.relative_to(settings.approved_directory)
 
     # Track what was cleared for user feedback
-    old_session_id = context.user_data.get("claude_session_id")
+    old_session_id = user_state.get("claude_session_id")
 
-    # Clear existing session data - this is the explicit way to reset context
-    context.user_data["claude_session_id"] = None
-    context.user_data["session_started"] = True
-    context.user_data["force_new_session"] = True
+    # Clear existing session data
+    user_state["claude_session_id"] = None
+    user_state["session_started"] = True
+    user_state["force_new_session"] = True
 
     cleared_info = ""
     if old_session_id:
         cleared_info = (
-            f"\n🗑️ Previous session <code>{old_session_id[:8]}...</code> cleared."
+            f"\n:wastebasket: Previous session `{old_session_id[:8]}...` cleared."
         )
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📝 Start Coding", callback_data="action:start_coding"
-            ),
-            InlineKeyboardButton(
-                "📁 Change Project", callback_data="action:show_projects"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "📋 Quick Actions", callback_data="action:quick_actions"
-            ),
-            InlineKeyboardButton("❓ Help", callback_data="action:help"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        f"🆕 <b>New Claude Code Session</b>\n\n"
-        f"📂 Working directory: <code>{relative_path}/</code>{cleared_info}\n\n"
+    text = (
+        f":new: *New Claude Code Session*\n\n"
+        f":file_folder: Working directory: `{relative_path}/`{cleared_info}\n\n"
         f"Context has been cleared. Send a message to start fresh, "
-        f"or use the buttons below:",
-        parse_mode="HTML",
-        reply_markup=reply_markup,
+        f"or use the buttons below:"
     )
 
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": text},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":memo: Start Coding"},
+                    "action_id": "action:start_coding",
+                    "value": "start_coding",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":file_folder: Change Project"},
+                    "action_id": "action:show_projects",
+                    "value": "show_projects",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":clipboard: Quick Actions"},
+                    "action_id": "action:quick_actions",
+                    "value": "quick_actions",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":question: Help"},
+                    "action_id": "action:help",
+                    "value": "help",
+                },
+            ],
+        },
+    ]
 
-async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await say(text=text, blocks=blocks)
+
+
+async def continue_session(ack, say, command, client, context) -> None:
     """Handle /continue command with optional prompt."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
-    claude_integration: ClaudeIntegration = context.bot_data.get("claude_integration")
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    await ack()
 
-    # Parse optional prompt from command arguments
-    # If no prompt provided, use a default to continue the conversation
-    prompt = " ".join(context.args) if context.args else None
+    user_id = command["user_id"]
+    channel_id = command["channel_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    claude_integration: ClaudeIntegration = deps.get("claude_integration")
+    audit_logger: AuditLogger = deps.get("audit_logger")
+    user_state = _get_user_state(deps, user_id)
+
+    # Parse optional prompt from command text
+    prompt = command.get("text", "").strip() or None
     default_prompt = "Please continue where we left off"
 
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = user_state.get("current_directory", settings.approved_directory)
 
     try:
         if not claude_integration:
-            await update.message.reply_text(
-                "❌ <b>Claude Integration Not Available</b>\n\n"
+            await say(
+                ":x: *Claude Integration Not Available*\n\n"
                 "Claude integration is not properly configured."
             )
             return
 
-        # Check if there's an existing session in user context
-        claude_session_id = context.user_data.get("claude_session_id")
+        # Check if there's an existing session in user state
+        claude_session_id = user_state.get("claude_session_id")
 
         if claude_session_id:
-            # We have a session in context, continue it directly
-            status_msg = await update.message.reply_text(
-                f"🔄 <b>Continuing Session</b>\n\n"
-                f"Session ID: <code>{claude_session_id[:8]}...</code>\n"
-                f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
-                f"{'Processing your message...' if prompt else 'Continuing where you left off...'}",
-                parse_mode="HTML",
+            status_msg = await say(
+                f":arrows_counterclockwise: *Continuing Session*\n\n"
+                f"Session ID: `{claude_session_id[:8]}...`\n"
+                f"Directory: `{current_dir.relative_to(settings.approved_directory)}/`\n\n"
+                f"{'Processing your message...' if prompt else 'Continuing where you left off...'}"
             )
 
-            # Continue with the existing session
-            # Use default prompt if none provided (Claude CLI requires a prompt)
             claude_response = await claude_integration.run_command(
                 prompt=prompt or default_prompt,
                 working_directory=current_dir,
@@ -399,14 +451,11 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 session_id=claude_session_id,
             )
         else:
-            # No session in context, try to find the most recent session
-            status_msg = await update.message.reply_text(
-                "🔍 <b>Looking for Recent Session</b>\n\n"
-                "Searching for your most recent session in this directory...",
-                parse_mode="HTML",
+            status_msg = await say(
+                ":mag: *Looking for Recent Session*\n\n"
+                "Searching for your most recent session in this directory..."
             )
 
-            # Use default prompt if none provided
             claude_response = await claude_integration.continue_session(
                 user_id=user_id,
                 working_directory=current_dir,
@@ -414,11 +463,11 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
 
         if claude_response:
-            # Update session ID in context
-            context.user_data["claude_session_id"] = claude_response.session_id
+            # Update session ID in state
+            user_state["claude_session_id"] = claude_response.session_id
 
             # Delete status message and send response
-            await status_msg.delete()
+            await client.chat_delete(channel=channel_id, ts=status_msg["ts"])
 
             # Format and send Claude's response
             from ..utils.formatting import ResponseFormatter
@@ -429,44 +478,58 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
 
             for msg in formatted_messages:
-                await update.message.reply_text(
-                    msg.text,
-                    parse_mode=msg.parse_mode,
-                    reply_markup=msg.reply_markup,
-                )
+                await say(msg.text)
 
             # Log successful continue
             if audit_logger:
                 await audit_logger.log_command(
                     user_id=user_id,
                     command="continue",
-                    args=context.args or [],
+                    args=[command.get("text", "")],
                     success=True,
                 )
 
         else:
             # No session found to continue
-            await status_msg.edit_text(
-                "❌ <b>No Session Found</b>\n\n"
-                f"No recent Claude session found in this directory.\n"
-                f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
-                f"<b>What you can do:</b>\n"
-                f"• Use <code>/new</code> to start a fresh session\n"
-                f"• Use <code>/status</code> to check your sessions\n"
-                f"• Navigate to a different directory with <code>/cd</code>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🆕 New Session", callback_data="action:new_session"
-                            ),
-                            InlineKeyboardButton(
-                                "📊 Status", callback_data="action:status"
-                            ),
-                        ]
-                    ]
-                ),
+            blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            ":x: *No Session Found*\n\n"
+                            f"No recent Claude session found in this directory.\n"
+                            f"Directory: `{current_dir.relative_to(settings.approved_directory)}/`\n\n"
+                            f"*What you can do:*\n"
+                            f"- Use `/new` to start a fresh session\n"
+                            f"- Use `/status` to check your sessions\n"
+                            f"- Navigate to a different directory with `/cd`"
+                        ),
+                    },
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": ":new: New Session"},
+                            "action_id": "action:new_session",
+                            "value": "new_session",
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": ":bar_chart: Status"},
+                            "action_id": "action:status",
+                            "value": "status",
+                        },
+                    ],
+                },
+            ]
+            await client.chat_update(
+                channel=channel_id,
+                ts=status_msg["ts"],
+                text=":x: No session found",
+                blocks=blocks,
             )
 
     except Exception as e:
@@ -476,20 +539,19 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Delete status message if it exists
         try:
             if "status_msg" in locals():
-                await status_msg.delete()
+                await client.chat_delete(channel=channel_id, ts=status_msg["ts"])
         except Exception:
             pass
 
         # Send error response
-        await update.message.reply_text(
-            f"❌ <b>Error Continuing Session</b>\n\n"
+        await say(
+            f":x: *Error Continuing Session*\n\n"
             f"An error occurred while trying to continue your session:\n\n"
-            f"<code>{error_msg}</code>\n\n"
-            f"<b>Suggestions:</b>\n"
-            f"• Try starting a new session with <code>/new</code>\n"
-            f"• Check your session status with <code>/status</code>\n"
-            f"• Contact support if the issue persists",
-            parse_mode="HTML",
+            f"`{error_msg}`\n\n"
+            f"*Suggestions:*\n"
+            f"- Try starting a new session with `/new`\n"
+            f"- Check your session status with `/status`\n"
+            f"- Contact support if the issue persists"
         )
 
         # Log failed continue
@@ -497,25 +559,26 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await audit_logger.log_command(
                 user_id=user_id,
                 command="continue",
-                args=context.args or [],
+                args=[command.get("text", "")],
                 success=False,
             )
 
 
-async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def list_files(ack, say, command, client, context) -> None:
     """Handle /ls command."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    audit_logger: AuditLogger = deps.get("audit_logger")
+    user_state = _get_user_state(deps, user_id)
 
     # Get current directory
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = user_state.get("current_directory", settings.approved_directory)
 
     try:
         # List directory contents
-        items = []
         directories = []
         files = []
 
@@ -524,19 +587,17 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             if item.name.startswith("."):
                 continue
 
-            # Escape HTML special characters in filenames
-            safe_name = _escape_markdown(item.name)
+            safe_name = escape_mrkdwn(item.name)
 
             if item.is_dir():
-                directories.append(f"📁 {safe_name}/")
+                directories.append(f":file_folder: {safe_name}/")
             else:
-                # Get file size
                 try:
                     size = item.stat().st_size
                     size_str = _format_file_size(size)
-                    files.append(f"📄 {safe_name} ({size_str})")
+                    files.append(f":page_facing_up: {safe_name} ({size_str})")
                 except OSError:
-                    files.append(f"📄 {safe_name}")
+                    files.append(f":page_facing_up: {safe_name}")
 
         # Combine directories first, then files
         items = directories + files
@@ -544,51 +605,66 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # Format response
         relative_path = current_dir.relative_to(settings.approved_directory)
         if not items:
-            message = f"📂 <code>{relative_path}/</code>\n\n<i>(empty directory)</i>"
+            message = f":open_file_folder: `{relative_path}/`\n\n_(empty directory)_"
         else:
-            message = f"📂 <code>{relative_path}/</code>\n\n"
+            message = f":open_file_folder: `{relative_path}/`\n\n"
 
             # Limit items shown to prevent message being too long
             max_items = 50
             if len(items) > max_items:
                 shown_items = items[:max_items]
                 message += "\n".join(shown_items)
-                message += f"\n\n<i>... and {len(items) - max_items} more items</i>"
+                message += f"\n\n_... and {len(items) - max_items} more items_"
             else:
                 message += "\n".join(items)
 
         # Add navigation buttons if not at root
-        keyboard = []
+        elements = []
         if current_dir != settings.approved_directory:
-            keyboard.append(
-                [
-                    InlineKeyboardButton("⬆️ Go Up", callback_data="cd:.."),
-                    InlineKeyboardButton("🏠 Go to Root", callback_data="cd:/"),
-                ]
-            )
+            elements.extend([
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":arrow_up: Go Up"},
+                    "action_id": "cd:..",
+                    "value": "..",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":house: Go to Root"},
+                    "action_id": "cd:/",
+                    "value": "/",
+                },
+            ])
 
-        keyboard.append(
-            [
-                InlineKeyboardButton("🔄 Refresh", callback_data="action:refresh_ls"),
-                InlineKeyboardButton(
-                    "📁 Projects", callback_data="action:show_projects"
-                ),
-            ]
-        )
+        elements.extend([
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
+                "action_id": "action:refresh_ls",
+                "value": "refresh_ls",
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":file_folder: Projects"},
+                "action_id": "action:show_projects",
+                "value": "show_projects",
+            },
+        ])
 
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": message}},
+            {"type": "actions", "elements": elements},
+        ]
 
-        await update.message.reply_text(
-            message, parse_mode="HTML", reply_markup=reply_markup
-        )
+        await say(text=message, blocks=blocks)
 
         # Log successful command
         if audit_logger:
             await audit_logger.log_command(user_id, "ls", [], True)
 
     except Exception as e:
-        error_msg = f"❌ Error listing directory: {str(e)}"
-        await update.message.reply_text(error_msg)
+        error_msg = f":x: Error listing directory: {str(e)}"
+        await say(error_msg)
 
         # Log failed command
         if audit_logger:
@@ -597,33 +673,34 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.error("Error in list_files command", error=str(e), user_id=user_id)
 
 
-async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def change_directory(ack, say, command, client, context) -> None:
     """Handle /cd command."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
-    security_validator: SecurityValidator = context.bot_data.get("security_validator")
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    security_validator: SecurityValidator = deps.get("security_validator")
+    audit_logger: AuditLogger = deps.get("audit_logger")
+    user_state = _get_user_state(deps, user_id)
 
     # Parse arguments
-    if not context.args:
-        await update.message.reply_text(
-            "<b>Usage:</b> <code>/cd &lt;directory&gt;</code>\n\n"
-            "<b>Examples:</b>\n"
-            "• <code>/cd myproject</code> - Enter subdirectory\n"
-            "• <code>/cd ..</code> - Go up one level\n"
-            "• <code>/cd /</code> - Go to root of approved directory\n\n"
-            "<b>Tips:</b>\n"
-            "• Use <code>/ls</code> to see available directories\n"
-            "• Use <code>/projects</code> to see all projects",
-            parse_mode="HTML",
+    target_path = command.get("text", "").strip()
+    if not target_path:
+        await say(
+            "*Usage:* `/cd <directory>`\n\n"
+            "*Examples:*\n"
+            "- `/cd myproject` - Enter subdirectory\n"
+            "- `/cd ..` - Go up one level\n"
+            "- `/cd /` - Go to root of approved directory\n\n"
+            "*Tips:*\n"
+            "- Use `/ls` to see available directories\n"
+            "- Use `/projects` to see all projects"
         )
         return
 
-    target_path = " ".join(context.args)
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
-    project_root = _get_thread_project_root(settings, context)
+    current_dir = user_state.get("current_directory", settings.approved_directory)
+    project_root = _get_channel_project_root(settings, user_state)
     directory_root = project_root or settings.approved_directory
 
     try:
@@ -642,9 +719,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 )
 
                 if not valid:
-                    await update.message.reply_text(
-                        f"❌ <b>Access Denied</b>\n\n{error}"
-                    )
+                    await say(f":x: *Access Denied*\n\n{error}")
 
                     # Log security violation
                     if audit_logger:
@@ -660,60 +735,56 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 resolved_path = resolved_path.resolve()
 
         if project_root and not _is_within_root(resolved_path, project_root):
-            await update.message.reply_text(
-                "❌ <b>Access Denied</b>\n\n"
-                "In thread mode, navigation is limited to the current project root.",
-                parse_mode="HTML",
+            await say(
+                ":x: *Access Denied*\n\n"
+                "In channel mode, navigation is limited to the current project root."
             )
             return
 
         # Check if directory exists and is actually a directory
         if not resolved_path.exists():
-            await update.message.reply_text(
-                f"❌ <b>Directory Not Found</b>\n\n<code>{target_path}</code> does not exist."
+            await say(
+                f":x: *Directory Not Found*\n\n`{target_path}` does not exist."
             )
             return
 
         if not resolved_path.is_dir():
-            await update.message.reply_text(
-                f"❌ <b>Not a Directory</b>\n\n<code>{target_path}</code> is not a directory."
+            await say(
+                f":x: *Not a Directory*\n\n`{target_path}` is not a directory."
             )
             return
 
-        # Update current directory in user data
-        context.user_data["current_directory"] = resolved_path
+        # Update current directory in user state
+        user_state["current_directory"] = resolved_path
 
         # Look up existing session for the new directory instead of clearing
-        claude_integration: ClaudeIntegration = context.bot_data.get(
-            "claude_integration"
-        )
+        claude_integration: ClaudeIntegration = deps.get("claude_integration")
         resumed_session_info = ""
         if claude_integration:
             existing_session = await claude_integration._find_resumable_session(
                 user_id, resolved_path
             )
             if existing_session:
-                context.user_data["claude_session_id"] = existing_session.session_id
+                user_state["claude_session_id"] = existing_session.session_id
                 resumed_session_info = (
-                    f"\n🔄 Resumed session <code>{existing_session.session_id[:8]}...</code> "
+                    f"\n:arrows_counterclockwise: Resumed session `{existing_session.session_id[:8]}...` "
                     f"({existing_session.message_count} messages)"
                 )
             else:
                 # No session for this directory - clear the current one
-                context.user_data["claude_session_id"] = None
+                user_state["claude_session_id"] = None
                 resumed_session_info = (
-                    "\n🆕 No existing session. Send a message to start a new one."
+                    "\n:new: No existing session. Send a message to start a new one."
                 )
 
         # Send confirmation
         relative_base = project_root or settings.approved_directory
         relative_path = resolved_path.relative_to(relative_base)
         relative_display = "/" if str(relative_path) == "." else f"{relative_path}/"
-        await update.message.reply_text(
-            f"✅ <b>Directory Changed</b>\n\n"
-            f"📂 Current directory: <code>{relative_display}</code>"
-            f"{resumed_session_info}",
-            parse_mode="HTML",
+        await say(
+            f":white_check_mark: *Directory Changed*\n\n"
+            f":file_folder: Current directory: `{relative_display}`"
+            f"{resumed_session_info}"
         )
 
         # Log successful command
@@ -721,8 +792,8 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await audit_logger.log_command(user_id, "cd", [target_path], True)
 
     except Exception as e:
-        error_msg = f"❌ <b>Error changing directory</b>\n\n{str(e)}"
-        await update.message.reply_text(error_msg, parse_mode="HTML")
+        error_msg = f":x: *Error changing directory*\n\n{str(e)}"
+        await say(error_msg)
 
         # Log failed command
         if audit_logger:
@@ -731,75 +802,91 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         logger.error("Error in change_directory command", error=str(e), user_id=user_id)
 
 
-async def print_working_directory(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def print_working_directory(ack, say, command, client, context) -> None:
     """Handle /pwd command."""
-    settings: Settings = context.bot_data["settings"]
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    await ack()
 
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    user_state = _get_user_state(deps, user_id)
+
+    current_dir = user_state.get("current_directory", settings.approved_directory)
     relative_path = current_dir.relative_to(settings.approved_directory)
     absolute_path = str(current_dir)
 
-    # Add quick navigation buttons
-    keyboard = [
-        [
-            InlineKeyboardButton("📁 List Files", callback_data="action:ls"),
-            InlineKeyboardButton("📋 Projects", callback_data="action:show_projects"),
-        ]
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":round_pushpin: *Current Directory*\n\n"
+                    f"Relative: `{relative_path}/`\n"
+                    f"Absolute: `{absolute_path}`"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":file_folder: List Files"},
+                    "action_id": "action:ls",
+                    "value": "ls",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":clipboard: Projects"},
+                    "action_id": "action:show_projects",
+                    "value": "show_projects",
+                },
+            ],
+        },
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        f"📍 <b>Current Directory</b>\n\n"
-        f"Relative: <code>{relative_path}/</code>\n"
-        f"Absolute: <code>{absolute_path}</code>",
-        parse_mode="HTML",
-        reply_markup=reply_markup,
+    await say(
+        text=f":round_pushpin: Current Directory: `{relative_path}/`",
+        blocks=blocks,
     )
 
 
-async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def show_projects(ack, say, command, client, context) -> None:
     """Handle /projects command."""
-    settings: Settings = context.bot_data["settings"]
+    await ack()
+
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
 
     try:
         if settings.enable_project_threads:
-            registry = context.bot_data.get("project_registry")
-            manager = context.bot_data.get("project_threads_manager")
+            registry = deps.get("project_registry")
+            manager = deps.get("project_threads_manager")
             if manager and getattr(manager, "registry", None):
                 registry = manager.registry
             if not registry:
-                await update.message.reply_text(
-                    "❌ <b>Project registry is not initialized.</b>",
-                    parse_mode="HTML",
-                )
+                await say(":x: *Project registry is not initialized.*")
                 return
 
             projects = registry.list_enabled()
             if not projects:
-                await update.message.reply_text(
-                    "📁 <b>No Projects Found</b>\n\n"
-                    "No enabled projects found in projects config.",
-                    parse_mode="HTML",
+                await say(
+                    ":file_folder: *No Projects Found*\n\n"
+                    "No enabled projects found in projects config."
                 )
                 return
 
             project_list = "\n".join(
                 [
-                    f"• <b>{escape_html(p.name)}</b> "
-                    f"(<code>{escape_html(p.slug)}</code>) "
-                    f"→ <code>{escape_html(str(p.relative_path))}</code>"
+                    f"- *{escape_mrkdwn(p.name)}* "
+                    f"(`{escape_mrkdwn(p.slug)}`) "
+                    f"-> `{escape_mrkdwn(str(p.relative_path))}`"
                     for p in projects
                 ]
             )
 
-            await update.message.reply_text(
-                f"📁 <b>Configured Projects</b>\n\n{project_list}",
-                parse_mode="HTML",
-            )
+            await say(f":file_folder: *Configured Projects*\n\n{project_list}")
             return
 
         # Get directories in approved directory (these are "projects")
@@ -809,68 +896,89 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 projects.append(item.name)
 
         if not projects:
-            await update.message.reply_text(
-                "📁 <b>No Projects Found</b>\n\n"
+            await say(
+                ":file_folder: *No Projects Found*\n\n"
                 "No subdirectories found in your approved directory.\n"
                 "Create some directories to organize your projects!"
             )
             return
 
-        # Create inline keyboard with project buttons
-        keyboard = []
-        for i in range(0, len(projects), 2):
-            row = []
-            for j in range(2):
-                if i + j < len(projects):
-                    project = projects[i + j]
-                    row.append(
-                        InlineKeyboardButton(
-                            f"📁 {project}", callback_data=f"cd:{project}"
-                        )
-                    )
-            keyboard.append(row)
+        # Create Block Kit buttons with project names
+        elements = []
+        for project in projects:
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": f":file_folder: {project}"},
+                    "action_id": f"cd:{project}",
+                    "value": project,
+                }
+            )
 
         # Add navigation buttons
-        keyboard.append(
-            [
-                InlineKeyboardButton("🏠 Go to Root", callback_data="cd:/"),
-                InlineKeyboardButton(
-                    "🔄 Refresh", callback_data="action:show_projects"
-                ),
-            ]
-        )
+        elements.extend([
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":house: Go to Root"},
+                "action_id": "cd:/",
+                "value": "/",
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
+                "action_id": "action:show_projects",
+                "value": "show_projects",
+            },
+        ])
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        project_list = "\n".join([f"- `{project}/`" for project in projects])
 
-        project_list = "\n".join([f"• <code>{project}/</code>" for project in projects])
+        # Slack limits actions block to 25 elements; chunk if needed
+        action_blocks = []
+        for i in range(0, len(elements), 25):
+            action_blocks.append({"type": "actions", "elements": elements[i : i + 25]})
 
-        await update.message.reply_text(
-            f"📁 <b>Available Projects</b>\n\n"
-            f"{project_list}\n\n"
-            f"Click a project below to navigate to it:",
-            parse_mode="HTML",
-            reply_markup=reply_markup,
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f":file_folder: *Available Projects*\n\n"
+                        f"{project_list}\n\n"
+                        f"Click a project below to navigate to it:"
+                    ),
+                },
+            },
+            *action_blocks,
+        ]
+
+        await say(
+            text=f":file_folder: Available Projects\n\n{project_list}",
+            blocks=blocks,
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error loading projects: {str(e)}")
+        await say(f":x: Error loading projects: {str(e)}")
         logger.error("Error in show_projects command", error=str(e))
 
 
-async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def session_status(ack, say, command, client, context) -> None:
     """Handle /status command."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    user_state = _get_user_state(deps, user_id)
 
     # Get session info
-    claude_session_id = context.user_data.get("claude_session_id")
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    claude_session_id = user_state.get("claude_session_id")
+    current_dir = user_state.get("current_directory", settings.approved_directory)
     relative_path = current_dir.relative_to(settings.approved_directory)
 
     # Get rate limiter info if available
-    rate_limiter = context.bot_data.get("rate_limiter")
+    rate_limiter = deps.get("rate_limiter")
     usage_info = ""
     if rate_limiter:
         try:
@@ -880,219 +988,296 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             cost_limit = cost_usage.get("limit", settings.claude_max_cost_per_user)
             cost_percentage = (current_cost / cost_limit) * 100 if cost_limit > 0 else 0
 
-            usage_info = f"💰 Usage: ${current_cost:.2f} / ${cost_limit:.2f} ({cost_percentage:.0f}%)\n"
+            usage_info = f":moneybag: Usage: ${current_cost:.2f} / ${cost_limit:.2f} ({cost_percentage:.0f}%)\n"
         except Exception:
-            usage_info = "💰 Usage: <i>Unable to retrieve</i>\n"
+            usage_info = ":moneybag: Usage: _Unable to retrieve_\n"
 
     # Check if there's a resumable session from the database
     resumable_info = ""
     if not claude_session_id:
-        claude_integration: ClaudeIntegration = context.bot_data.get(
-            "claude_integration"
-        )
+        claude_integration: ClaudeIntegration = deps.get("claude_integration")
         if claude_integration:
             existing = await claude_integration._find_resumable_session(
                 user_id, current_dir
             )
             if existing:
                 resumable_info = (
-                    f"🔄 Resumable: <code>{existing.session_id[:8]}...</code> "
+                    f":arrows_counterclockwise: Resumable: `{existing.session_id[:8]}...` "
                     f"({existing.message_count} msgs)"
                 )
 
     # Format status message
     status_lines = [
-        "📊 <b>Session Status</b>",
+        ":bar_chart: *Session Status*",
         "",
-        f"📂 Directory: <code>{relative_path}/</code>",
-        f"🤖 Claude Session: {'✅ Active' if claude_session_id else '❌ None'}",
+        f":file_folder: Directory: `{relative_path}/`",
+        f":robot_face: Claude Session: {'✅ Active' if claude_session_id else '❌ None'}",
         usage_info.rstrip(),
-        f"🕐 Last Update: {update.message.date.strftime('%H:%M:%S UTC')}",
     ]
 
     if claude_session_id:
-        status_lines.append(f"🆔 Session ID: <code>{claude_session_id[:8]}...</code>")
+        status_lines.append(f":id: Session ID: `{claude_session_id[:8]}...`")
     elif resumable_info:
         status_lines.append(resumable_info)
-        status_lines.append("💡 Session will auto-resume on your next message")
+        status_lines.append(":bulb: Session will auto-resume on your next message")
+
+    status_text = "\n".join(status_lines)
 
     # Add action buttons
-    keyboard = []
+    elements = []
     if claude_session_id:
-        keyboard.append(
-            [
-                InlineKeyboardButton("🔄 Continue", callback_data="action:continue"),
-                InlineKeyboardButton(
-                    "🆕 New Session", callback_data="action:new_session"
-                ),
-            ]
-        )
+        elements.extend([
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Continue"},
+                "action_id": "action:continue",
+                "value": "continue",
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":new: New Session"},
+                "action_id": "action:new_session",
+                "value": "new_session",
+            },
+        ])
     else:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "🆕 Start Session", callback_data="action:new_session"
-                )
-            ]
+        elements.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": ":new: Start Session"},
+                "action_id": "action:new_session",
+                "value": "new_session",
+            }
         )
 
-    keyboard.append(
-        [
-            InlineKeyboardButton("📤 Export", callback_data="action:export"),
-            InlineKeyboardButton("🔄 Refresh", callback_data="action:refresh_status"),
-        ]
-    )
+    elements.extend([
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": ":outbox_tray: Export"},
+            "action_id": "action:export",
+            "value": "export",
+        },
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
+            "action_id": "action:refresh_status",
+            "value": "refresh_status",
+        },
+    ])
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": status_text}},
+        {"type": "actions", "elements": elements},
+    ]
 
-    await update.message.reply_text(
-        "\n".join(status_lines), parse_mode="HTML", reply_markup=reply_markup
-    )
+    await say(text=status_text, blocks=blocks)
 
 
-async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def export_session(ack, say, command, client, context) -> None:
     """Handle /export command."""
-    update.effective_user.id
-    features = context.bot_data.get("features")
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    features = deps.get("features")
+    user_state = _get_user_state(deps, user_id)
 
     # Check if session export is available
     session_exporter = features.get_session_export() if features else None
 
     if not session_exporter:
-        await update.message.reply_text(
-            "📤 <b>Export Session</b>\n\n"
+        await say(
+            ":outbox_tray: *Export Session*\n\n"
             "Session export functionality is not available.\n\n"
-            "<b>Planned features:</b>\n"
-            "• Export conversation history\n"
-            "• Save session state\n"
-            "• Share conversations\n"
-            "• Create session backups"
+            "*Planned features:*\n"
+            "- Export conversation history\n"
+            "- Save session state\n"
+            "- Share conversations\n"
+            "- Create session backups"
         )
         return
 
     # Get current session
-    claude_session_id = context.user_data.get("claude_session_id")
+    claude_session_id = user_state.get("claude_session_id")
 
     if not claude_session_id:
-        await update.message.reply_text(
-            "❌ <b>No Active Session</b>\n\n"
+        await say(
+            ":x: *No Active Session*\n\n"
             "There's no active Claude session to export.\n\n"
-            "<b>What you can do:</b>\n"
-            "• Start a new session with <code>/new</code>\n"
-            "• Continue an existing session with <code>/continue</code>\n"
-            "• Check your status with <code>/status</code>"
+            "*What you can do:*\n"
+            "- Start a new session with `/new`\n"
+            "- Continue an existing session with `/continue`\n"
+            "- Check your status with `/status`"
         )
         return
 
-    # Create export format selection keyboard
-    keyboard = [
-        [
-            InlineKeyboardButton("📝 Markdown", callback_data="export:markdown"),
-            InlineKeyboardButton("🌐 HTML", callback_data="export:html"),
-        ],
-        [
-            InlineKeyboardButton("📋 JSON", callback_data="export:json"),
-            InlineKeyboardButton("❌ Cancel", callback_data="export:cancel"),
-        ],
+    # Create export format selection buttons
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":outbox_tray: *Export Session*\n\n"
+                    f"Ready to export session: `{claude_session_id[:8]}...`\n\n"
+                    f"*Choose export format:*"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":memo: Markdown"},
+                    "action_id": "export:markdown",
+                    "value": "markdown",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":globe_with_meridians: HTML"},
+                    "action_id": "export:html",
+                    "value": "html",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":clipboard: JSON"},
+                    "action_id": "export:json",
+                    "value": "json",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":x: Cancel"},
+                    "action_id": "export:cancel",
+                    "value": "cancel",
+                },
+            ],
+        },
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        "📤 <b>Export Session</b>\n\n"
-        f"Ready to export session: <code>{claude_session_id[:8]}...</code>\n\n"
-        "<b>Choose export format:</b>",
-        parse_mode="HTML",
-        reply_markup=reply_markup,
+    await say(
+        text=f":outbox_tray: Export session `{claude_session_id[:8]}...`",
+        blocks=blocks,
     )
 
 
-async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def end_session(ack, say, command, client, context) -> None:
     """Handle /end command to terminate the current session."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    user_state = _get_user_state(deps, user_id)
 
     # Check if there's an active session
-    claude_session_id = context.user_data.get("claude_session_id")
+    claude_session_id = user_state.get("claude_session_id")
 
     if not claude_session_id:
-        await update.message.reply_text(
-            "ℹ️ <b>No Active Session</b>\n\n"
+        await say(
+            ":information_source: *No Active Session*\n\n"
             "There's no active Claude session to end.\n\n"
-            "<b>What you can do:</b>\n"
-            "• Use <code>/new</code> to start a new session\n"
-            "• Use <code>/status</code> to check your session status\n"
-            "• Send any message to start a conversation"
+            "*What you can do:*\n"
+            "- Use `/new` to start a new session\n"
+            "- Use `/status` to check your session status\n"
+            "- Send any message to start a conversation"
         )
         return
 
     # Get current directory for display
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = user_state.get("current_directory", settings.approved_directory)
     relative_path = current_dir.relative_to(settings.approved_directory)
 
     # Clear session data
-    context.user_data["claude_session_id"] = None
-    context.user_data["session_started"] = False
-    context.user_data["last_message"] = None
+    user_state["claude_session_id"] = None
+    user_state["session_started"] = False
+    user_state["last_message"] = None
 
     # Create quick action buttons
-    keyboard = [
-        [
-            InlineKeyboardButton("🆕 New Session", callback_data="action:new_session"),
-            InlineKeyboardButton(
-                "📁 Change Project", callback_data="action:show_projects"
-            ),
-        ],
-        [
-            InlineKeyboardButton("📊 Status", callback_data="action:status"),
-            InlineKeyboardButton("❓ Help", callback_data="action:help"),
-        ],
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    ":white_check_mark: *Session Ended*\n\n"
+                    f"Your Claude session has been terminated.\n\n"
+                    f"*Current Status:*\n"
+                    f"- Directory: `{relative_path}/`\n"
+                    f"- Session: None\n"
+                    f"- Ready for new commands\n\n"
+                    f"*Next Steps:*\n"
+                    f"- Start a new session with `/new`\n"
+                    f"- Check status with `/status`\n"
+                    f"- Send any message to begin a new conversation"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":new: New Session"},
+                    "action_id": "action:new_session",
+                    "value": "new_session",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":file_folder: Change Project"},
+                    "action_id": "action:show_projects",
+                    "value": "show_projects",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":bar_chart: Status"},
+                    "action_id": "action:status",
+                    "value": "status",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ":question: Help"},
+                    "action_id": "action:help",
+                    "value": "help",
+                },
+            ],
+        },
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        "✅ <b>Session Ended</b>\n\n"
-        f"Your Claude session has been terminated.\n\n"
-        f"<b>Current Status:</b>\n"
-        f"• Directory: <code>{relative_path}/</code>\n"
-        f"• Session: None\n"
-        f"• Ready for new commands\n\n"
-        f"<b>Next Steps:</b>\n"
-        f"• Start a new session with <code>/new</code>\n"
-        f"• Check status with <code>/status</code>\n"
-        f"• Send any message to begin a new conversation",
-        parse_mode="HTML",
-        reply_markup=reply_markup,
+    await say(
+        text=":white_check_mark: Session Ended",
+        blocks=blocks,
     )
 
     logger.info("Session ended by user", user_id=user_id, session_id=claude_session_id)
 
 
-async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def quick_actions(ack, say, command, client, context) -> None:
     """Handle /actions command to show quick actions."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
-    features = context.bot_data.get("features")
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    features = deps.get("features")
+    user_state = _get_user_state(deps, user_id)
 
     if not features or not features.is_enabled("quick_actions"):
-        await update.message.reply_text(
-            "❌ <b>Quick Actions Disabled</b>\n\n"
+        await say(
+            ":x: *Quick Actions Disabled*\n\n"
             "Quick actions feature is not enabled.\n"
             "Contact your administrator to enable this feature."
         )
         return
 
     # Get current directory
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = user_state.get("current_directory", settings.approved_directory)
 
     try:
         quick_action_manager = features.get_quick_actions()
         if not quick_action_manager:
-            await update.message.reply_text(
-                "❌ <b>Quick Actions Unavailable</b>\n\n"
+            await say(
+                ":x: *Quick Actions Unavailable*\n\n"
                 "Quick actions service is not available."
             )
             return
@@ -1103,70 +1288,96 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
         if not actions:
-            await update.message.reply_text(
-                "🤖 <b>No Actions Available</b>\n\n"
+            await say(
+                ":robot_face: *No Actions Available*\n\n"
                 "No quick actions are available for the current context.\n\n"
-                "<b>Try:</b>\n"
-                "• Navigating to a project directory with <code>/cd</code>\n"
-                "• Creating some code files\n"
-                "• Starting a Claude session with <code>/new</code>"
+                "*Try:*\n"
+                "- Navigating to a project directory with `/cd`\n"
+                "- Creating some code files\n"
+                "- Starting a Claude session with `/new`"
             )
             return
 
-        # Create inline keyboard
-        keyboard = quick_action_manager.create_inline_keyboard(actions, max_columns=2)
+        # Create Block Kit buttons from actions
+        elements = []
+        for action in actions:
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{action.icon} {action.name}",
+                    },
+                    "action_id": f"quick:{action.id}",
+                    "value": action.id,
+                }
+            )
 
         relative_path = current_dir.relative_to(settings.approved_directory)
-        await update.message.reply_text(
-            f"⚡ <b>Quick Actions</b>\n\n"
-            f"📂 Context: <code>{relative_path}/</code>\n\n"
-            f"Select an action to execute:",
-            parse_mode="HTML",
-            reply_markup=keyboard,
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f":zap: *Quick Actions*\n\n"
+                        f":file_folder: Context: `{relative_path}/`\n\n"
+                        f"Select an action to execute:"
+                    ),
+                },
+            },
+            {"type": "actions", "elements": elements[:25]},
+        ]
+
+        await say(
+            text=f":zap: Quick Actions for `{relative_path}/`",
+            blocks=blocks,
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ <b>Error Loading Actions</b>\n\n{str(e)}")
+        await say(f":x: *Error Loading Actions*\n\n{str(e)}")
         logger.error("Error in quick_actions command", error=str(e), user_id=user_id)
 
 
-async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def git_command(ack, say, command, client, context) -> None:
     """Handle /git command to show git repository information."""
-    user_id = update.effective_user.id
-    settings: Settings = context.bot_data["settings"]
-    features = context.bot_data.get("features")
+    await ack()
+
+    user_id = command["user_id"]
+    deps = context.get("deps", {})
+    settings: Settings = deps["settings"]
+    features = deps.get("features")
+    user_state = _get_user_state(deps, user_id)
 
     if not features or not features.is_enabled("git"):
-        await update.message.reply_text(
-            "❌ <b>Git Integration Disabled</b>\n\n"
+        await say(
+            ":x: *Git Integration Disabled*\n\n"
             "Git integration feature is not enabled.\n"
             "Contact your administrator to enable this feature."
         )
         return
 
     # Get current directory
-    current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
-    )
+    current_dir = user_state.get("current_directory", settings.approved_directory)
 
     try:
         git_integration = features.get_git_integration()
         if not git_integration:
-            await update.message.reply_text(
-                "❌ <b>Git Integration Unavailable</b>\n\n"
+            await say(
+                ":x: *Git Integration Unavailable*\n\n"
                 "Git integration service is not available."
             )
             return
 
         # Check if current directory is a git repository
         if not (current_dir / ".git").exists():
-            await update.message.reply_text(
-                f"📂 <b>Not a Git Repository</b>\n\n"
-                f"Current directory <code>{current_dir.relative_to(settings.approved_directory)}/</code> is not a git repository.\n\n"
-                f"<b>Options:</b>\n"
-                f"• Navigate to a git repository with <code>/cd</code>\n"
-                f"• Initialize a new repository (ask Claude to help)\n"
-                f"• Clone an existing repository (ask Claude to help)"
+            await say(
+                f":file_folder: *Not a Git Repository*\n\n"
+                f"Current directory `{current_dir.relative_to(settings.approved_directory)}/` is not a git repository.\n\n"
+                f"*Options:*\n"
+                f"- Navigate to a git repository with `/cd`\n"
+                f"- Initialize a new repository (ask Claude to help)\n"
+                f"- Clone an existing repository (ask Claude to help)"
             )
             return
 
@@ -1175,49 +1386,67 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # Format status message
         relative_path = current_dir.relative_to(settings.approved_directory)
-        status_message = "🔗 <b>Git Repository Status</b>\n\n"
-        status_message += f"📂 Directory: <code>{relative_path}/</code>\n"
-        status_message += f"🌿 Branch: <code>{git_status.branch}</code>\n"
+        status_message = ":link: *Git Repository Status*\n\n"
+        status_message += f":file_folder: Directory: `{relative_path}/`\n"
+        status_message += f":herb: Branch: `{git_status.branch}`\n"
 
         if git_status.ahead > 0:
-            status_message += f"⬆️ Ahead: {git_status.ahead} commits\n"
+            status_message += f":arrow_up: Ahead: {git_status.ahead} commits\n"
         if git_status.behind > 0:
-            status_message += f"⬇️ Behind: {git_status.behind} commits\n"
+            status_message += f":arrow_down: Behind: {git_status.behind} commits\n"
 
         # Show file changes
         if not git_status.is_clean:
-            status_message += "\n<b>Changes:</b>\n"
+            status_message += "\n*Changes:*\n"
             if git_status.modified:
-                status_message += f"📝 Modified: {len(git_status.modified)} files\n"
+                status_message += f":pencil: Modified: {len(git_status.modified)} files\n"
             if git_status.added:
-                status_message += f"➕ Added: {len(git_status.added)} files\n"
+                status_message += f":heavy_plus_sign: Added: {len(git_status.added)} files\n"
             if git_status.deleted:
-                status_message += f"➖ Deleted: {len(git_status.deleted)} files\n"
+                status_message += f":heavy_minus_sign: Deleted: {len(git_status.deleted)} files\n"
             if git_status.untracked:
-                status_message += f"❓ Untracked: {len(git_status.untracked)} files\n"
+                status_message += f":grey_question: Untracked: {len(git_status.untracked)} files\n"
         else:
-            status_message += "\n✅ Working directory clean\n"
+            status_message += "\n:white_check_mark: Working directory clean\n"
 
         # Create action buttons
-        keyboard = [
-            [
-                InlineKeyboardButton("📊 Show Diff", callback_data="git:diff"),
-                InlineKeyboardButton("📜 Show Log", callback_data="git:log"),
-            ],
-            [
-                InlineKeyboardButton("🔄 Refresh", callback_data="git:status"),
-                InlineKeyboardButton("📁 Files", callback_data="action:ls"),
-            ],
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": status_message}},
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":bar_chart: Show Diff"},
+                        "action_id": "git:diff",
+                        "value": "diff",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":scroll: Show Log"},
+                        "action_id": "git:log",
+                        "value": "log",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Refresh"},
+                        "action_id": "git:status",
+                        "value": "status",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":file_folder: Files"},
+                        "action_id": "action:ls",
+                        "value": "ls",
+                    },
+                ],
+            },
         ]
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_text(
-            status_message, parse_mode="HTML", reply_markup=reply_markup
-        )
+        await say(text=status_message, blocks=blocks)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ <b>Git Error</b>\n\n{str(e)}")
+        await say(f":x: *Git Error*\n\n{str(e)}")
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
@@ -1228,11 +1457,3 @@ def _format_file_size(size: int) -> str:
             return f"{size:.1f}{unit}" if unit != "B" else f"{size}B"
         size /= 1024
     return f"{size:.1f}TB"
-
-
-def _escape_markdown(text: str) -> str:
-    """Escape HTML-special characters in text for Telegram.
-
-    Legacy name kept for compatibility with callers; actually escapes HTML.
-    """
-    return escape_html(text)
