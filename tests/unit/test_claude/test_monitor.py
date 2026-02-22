@@ -189,8 +189,11 @@ class TestToolMonitorBashBoundary:
     """Test that validate_tool_call wires up the bash directory boundary check."""
 
     @pytest.fixture
-    def config(self, tmp_path: Path) -> Settings:
+    def config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
+        monkeypatch.delenv("DEVELOPMENT_MODE", raising=False)
+        monkeypatch.delenv("ALLOWED_USERS", raising=False)
         return Settings(
+            _env_file=None,
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,

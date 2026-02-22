@@ -132,15 +132,20 @@ class SecurityValidator:
     ]
 
     def __init__(
-        self, approved_directory: Path, disable_security_patterns: bool = False
+        self,
+        approved_directory: Path,
+        disable_security_patterns: bool = False,
+        development_mode: bool = False,
     ):
         """Initialize validator with approved directory."""
         self.approved_directory = approved_directory.resolve()
         self.disable_security_patterns = disable_security_patterns
+        self.development_mode = development_mode
         logger.info(
             "Security validator initialized",
             approved_directory=str(self.approved_directory),
             disable_security_patterns=self.disable_security_patterns,
+            development_mode=self.development_mode,
         )
 
     def validate_path(
@@ -188,6 +193,14 @@ class SecurityValidator:
 
             # Ensure target is within approved directory
             if not self._is_within_directory(target, self.approved_directory):
+                if self.development_mode:
+                    logger.warning(
+                        "DEV MODE: allowing path outside approved directory",
+                        requested_path=user_path,
+                        resolved_path=str(target),
+                        approved_directory=str(self.approved_directory),
+                    )
+                    return True, target, None
                 logger.warning(
                     "Path traversal attempt detected",
                     requested_path=user_path,
