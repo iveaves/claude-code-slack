@@ -42,8 +42,8 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 ### 3. Install the Bot
 
 ```bash
-git clone https://github.com/RichardAtCT/claude-code-telegram.git
-cd claude-code-telegram
+git clone https://github.com/RichardAtCT/claude-code-slack.git
+cd claude-code-slack
 make dev
 ```
 
@@ -301,4 +301,4 @@ ENABLE_TELEMETRY=true
 - **Documentation**: Check the main [README.md](../README.md)
 - **Configuration**: See [configuration.md](configuration.md) for all options
 - **Security**: See [SECURITY.md](../SECURITY.md) for security concerns
-- **Issues**: [Open an issue](https://github.com/RichardAtCT/claude-code-telegram/issues)
+- **Issues**: [Open an issue](https://github.com/RichardAtCT/claude-code-slack/issues)

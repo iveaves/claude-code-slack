@@ -18,7 +18,7 @@ This document provides detailed information for developers working on the Claude
 1. **Clone the repository**:
    ```bash
    git clone <repository-url>
-   cd claude-code-telegram
+   cd claude-code-slack
    ```
 
 2. **Install Poetry** (if not already installed):

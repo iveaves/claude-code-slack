@@ -22,7 +22,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/ubuntu/Code/oss/claude-code-telegram
+WorkingDirectory=/home/ubuntu/Code/oss/claude-code-slack
 ExecStart=/home/ubuntu/.local/bin/poetry run claude-telegram-bot
 Restart=always
 RestartSec=10
@@ -130,7 +130,7 @@ systemctl --user cat claude-telegram-bot
 poetry --version
 
 # Test the bot manually first
-cd /home/ubuntu/Code/oss/claude-code-telegram
+cd /home/ubuntu/Code/oss/claude-code-slack
 poetry run claude-telegram-bot
 ```
 
@@ -145,4 +145,4 @@ loginctl enable-linger $USER
 
 - Service file: `~/.config/systemd/user/claude-telegram-bot.service`
 - Logs: View with `journalctl --user -u claude-telegram-bot`
-- Project: `/home/ubuntu/Code/oss/claude-code-telegram`
+- Project: `/home/ubuntu/Code/oss/claude-code-slack`

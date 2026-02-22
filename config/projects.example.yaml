@@ -15,7 +15,7 @@
 projects:
   - slug: claude-code-slack
     name: Claude Code Slack Bot
-    path: claude-code-telegram
+    path: claude-code-slack
     channel_id: C0123456789
     enabled: true
 

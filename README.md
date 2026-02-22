@@ -1,9 +1,11 @@
-# Claude Code Telegram Bot
+# Claude Code Slack Bot
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-A Telegram bot that gives you remote access to [Claude Code](https://claude.ai/code). Chat naturally with Claude about your projects from anywhere -- no terminal commands needed.
+> Originally derived from [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) by [RichardAtCT](https://github.com/RichardAtCT). Refactored for Slack.
+
+A Slack bot that gives you remote access to [Claude Code](https://claude.ai/code). Chat naturally with Claude about your projects from anywhere -- no terminal commands needed.
 
 ## What is this?
 
@@ -41,8 +43,8 @@ Bot: Running pytest...
 ### 2. Install
 
 ```bash
-git clone https://github.com/RichardAtCT/claude-code-telegram.git
-cd claude-code-telegram
+git clone https://github.com/RichardAtCT/claude-code-slack.git
+cd claude-code-slack
 make dev
 ```
 

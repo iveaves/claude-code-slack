@@ -24,8 +24,8 @@ This project is currently under active development with the following status:
 
 1. **Fork and clone the repository**:
    ```bash
-   git clone https://github.com/your-username/claude-code-telegram.git
-   cd claude-code-telegram
+   git clone https://github.com/your-username/claude-code-slack.git
+   cd claude-code-slack
    ```
 
 2. **Install dependencies**:
