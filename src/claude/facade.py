@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ..config.settings import Settings
+from .cli_integration import ClaudeProcessManager
 from .exceptions import ClaudeToolValidationError
 from .monitor import ToolMonitor
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
@@ -24,12 +25,18 @@ class ClaudeIntegration:
         self,
         config: Settings,
         sdk_manager: Optional[ClaudeSDKManager] = None,
+        process_manager: Optional[ClaudeProcessManager] = None,
         session_manager: Optional[SessionManager] = None,
         tool_monitor: Optional[ToolMonitor] = None,
     ):
         """Initialize Claude integration facade."""
         self.config = config
-        self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
+        self.sdk_manager = (
+            sdk_manager
+            if sdk_manager is not None
+            else (None if process_manager else ClaudeSDKManager(config))
+        )
+        self.process_manager = process_manager
         self.session_manager = session_manager
         self.tool_monitor = tool_monitor
 
@@ -37,10 +44,13 @@ class ClaudeIntegration:
         self,
         prompt: str,
         working_directory: Path,
-        user_id: int,
+        user_id: str,
         session_id: Optional[str] = None,
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
         force_new: bool = False,
+        ask_user_callback: Optional[Callable] = None,
+        scheduler_callback: Optional[Callable] = None,
+        file_upload_callback: Optional[Callable] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -81,10 +91,25 @@ class ClaudeIntegration:
         async def stream_handler(update: StreamUpdate):
             nonlocal tools_validated
 
+            # Tools managed by bot callbacks (bypass ToolMonitor)
+            _BOT_MANAGED_TOOLS = {
+                "AskUserQuestion",
+                "Skill",
+                "ScheduleJob",
+                "ListScheduledJobs",
+                "RemoveScheduledJob",
+                "SlackFileUpload",
+            }
+
             # Validate tool calls
             if update.tool_calls:
                 for tool_call in update.tool_calls:
                     tool_name = tool_call["name"]
+
+                    # Skip validation for bot-managed tools
+                    if tool_name in _BOT_MANAGED_TOOLS:
+                        continue
+
                     valid, error = await self.tool_monitor.validate_tool_call(
                         tool_name,
                         tool_call.get("input", {}),
@@ -148,6 +173,9 @@ class ClaudeIntegration:
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=stream_handler,
+                    ask_user_callback=ask_user_callback,
+                    scheduler_callback=scheduler_callback,
+                    file_upload_callback=file_upload_callback,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired on Claude's side),
@@ -174,6 +202,8 @@ class ClaudeIntegration:
                         session_id=None,
                         continue_session=False,
                         stream_callback=stream_handler,
+                        ask_user_callback=ask_user_callback,
+                        file_upload_callback=file_upload_callback,
                     )
                 else:
                     raise
@@ -255,19 +285,36 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
+        ask_user_callback: Optional[Callable] = None,
+        scheduler_callback: Optional[Callable] = None,
+        file_upload_callback: Optional[Callable] = None,
     ) -> ClaudeResponse:
-        """Execute command via SDK."""
-        return await self.sdk_manager.execute_command(
-            prompt=prompt,
-            working_directory=working_directory,
-            session_id=session_id,
-            continue_session=continue_session,
-            stream_callback=stream_callback,
-        )
+        """Execute command via the configured backend (SDK or CLI)."""
+        if self.sdk_manager:
+            return await self.sdk_manager.execute_command(
+                prompt=prompt,
+                working_directory=working_directory,
+                session_id=session_id,
+                continue_session=continue_session,
+                stream_callback=stream_callback,
+                ask_user_callback=ask_user_callback,
+                scheduler_callback=scheduler_callback,
+                file_upload_callback=file_upload_callback,
+            )
+        elif self.process_manager:
+            return await self.process_manager.execute_command(
+                prompt=prompt,
+                working_directory=working_directory,
+                session_id=session_id,
+                continue_session=continue_session,
+                stream_callback=stream_callback,
+            )
+        else:
+            raise RuntimeError("No Claude backend configured (SDK or CLI)")
 
     async def _find_resumable_session(
         self,
-        user_id: int,
+        user_id: str,
         working_directory: Path,
     ) -> Optional["ClaudeSession"]:  # noqa: F821
         """Find the most recent resumable session for a user in a directory.
@@ -293,7 +340,7 @@ class ClaudeIntegration:
 
     async def continue_session(
         self,
-        user_id: int,
+        user_id: str,
         working_directory: Path,
         prompt: Optional[str] = None,
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
@@ -337,7 +384,7 @@ class ClaudeIntegration:
         """Get session information."""
         return await self.session_manager.get_session_info(session_id)
 
-    async def get_user_sessions(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all sessions for a user."""
         sessions = await self.session_manager._get_user_sessions(user_id)
         return [
@@ -362,7 +409,7 @@ class ClaudeIntegration:
         """Get tool usage statistics."""
         return self.tool_monitor.get_tool_stats()
 
-    async def get_user_summary(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_summary(self, user_id: str) -> Dict[str, Any]:
         """Get comprehensive user summary."""
         session_summary = await self.session_manager.get_user_session_summary(user_id)
         tool_usage = self.tool_monitor.get_user_tool_usage(user_id)
@@ -378,6 +425,9 @@ class ClaudeIntegration:
         logger.info("Shutting down Claude integration")
 
         await self.cleanup_expired_sessions()
+
+        if self.process_manager:
+            await self.process_manager.kill_all_processes()
 
         logger.info("Claude integration shutdown complete")
 

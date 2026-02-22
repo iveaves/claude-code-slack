@@ -192,6 +192,7 @@ class TestToolMonitorBashBoundary:
     def config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
         monkeypatch.delenv("DEVELOPMENT_MODE", raising=False)
         monkeypatch.delenv("ALLOWED_USERS", raising=False)
+        monkeypatch.delenv("DISABLE_TOOL_VALIDATION", raising=False)
         return Settings(
             _env_file=None,
             telegram_bot_token="test:token",

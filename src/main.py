@@ -1,4 +1,4 @@
-"""Main entry point for Claude Code Telegram Bot."""
+"""Main entry point for Claude Code Slack Bot."""
 
 import argparse
 import asyncio
@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import structlog
+from slack_sdk.web.async_client import AsyncWebClient
 
 from src import __version__
 from src.bot.core import ClaudeCodeBot
@@ -25,7 +26,7 @@ from src.events.handlers import AgentHandler
 from src.events.middleware import EventSecurityMiddleware
 from src.exceptions import ConfigurationError
 from src.notifications.service import NotificationService
-from src.projects import ProjectThreadManager, load_project_registry
+from src.projects import ProjectChannelManager, load_project_registry
 from src.scheduler.scheduler import JobScheduler
 from src.security.audit import AuditLogger, InMemoryAuditStorage
 from src.security.auth import (
@@ -44,14 +45,12 @@ def setup_logging(debug: bool = False) -> None:
     """Configure structured logging."""
     level = logging.DEBUG if debug else logging.INFO
 
-    # Configure standard logging
     logging.basicConfig(
         level=level,
         format="%(message)s",
         stream=sys.stdout,
     )
 
-    # Configure structlog
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
@@ -78,12 +77,12 @@ def setup_logging(debug: bool = False) -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Claude Code Telegram Bot",
+        description="Claude Code Slack Bot",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
-        "--version", action="version", version=f"Claude Code Telegram Bot {__version__}"
+        "--version", action="version", version=f"Claude Code Slack Bot {__version__}"
     )
 
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -107,16 +106,13 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Create security components
     providers = []
 
-    # Add whitelist provider if users are configured
     if config.allowed_users:
         providers.append(WhitelistAuthProvider(config.allowed_users))
 
-    # Add token provider if enabled
     if config.enable_token_auth:
-        token_storage = InMemoryTokenStorage()  # TODO: Use database storage
+        token_storage = InMemoryTokenStorage()
         providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
 
-    # Fall back to allowing all users in development mode
     if not providers and config.development_mode:
         logger.warning(
             "No auth providers configured"
@@ -134,32 +130,41 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     rate_limiter = RateLimiter(config)
 
-    # Create audit storage and logger
-    audit_storage = InMemoryAuditStorage()  # TODO: Use database storage in production
+    audit_storage = InMemoryAuditStorage()
     audit_logger = AuditLogger(audit_storage)
 
-    # Create Claude integration components with persistent storage
+    # Create Claude integration components
     session_storage = SQLiteSessionStorage(storage.db_manager)
     session_manager = SessionManager(config, session_storage)
     tool_monitor = ToolMonitor(
         config, security_validator, agentic_mode=config.agentic_mode
     )
 
-    # Create Claude SDK manager and integration facade
-    logger.info("Using Claude Python SDK integration")
-    sdk_manager = ClaudeSDKManager(config)
+    # Create Claude backend based on configuration
+    if getattr(config, "use_sdk", True):
+        logger.info("Using Claude Python SDK integration")
+        sdk_manager = ClaudeSDKManager(config)
+        claude_integration = ClaudeIntegration(
+            config=config,
+            sdk_manager=sdk_manager,
+            session_manager=session_manager,
+            tool_monitor=tool_monitor,
+        )
+    else:
+        from src.claude.cli_integration import ClaudeProcessManager
 
-    claude_integration = ClaudeIntegration(
-        config=config,
-        sdk_manager=sdk_manager,
-        session_manager=session_manager,
-        tool_monitor=tool_monitor,
-    )
+        logger.info("Using Claude CLI subprocess integration")
+        process_manager = ClaudeProcessManager(config)
+        claude_integration = ClaudeIntegration(
+            config=config,
+            process_manager=process_manager,
+            session_manager=session_manager,
+            tool_monitor=tool_monitor,
+        )
 
-    # --- Event bus and agentic platform components ---
+    # Event bus and agentic platform components
     event_bus = EventBus()
 
-    # Event security middleware
     event_security = EventSecurityMiddleware(
         event_bus=event_bus,
         security_validator=security_validator,
@@ -167,12 +172,11 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     event_security.register()
 
-    # Agent handler — translates events into Claude executions
     agent_handler = AgentHandler(
         event_bus=event_bus,
         claude_integration=claude_integration,
         default_working_directory=config.approved_directory,
-        default_user_id=config.allowed_users[0] if config.allowed_users else 0,
+        default_user_id=config.allowed_users[0] if config.allowed_users else "",
     )
     agent_handler.register()
 
@@ -186,14 +190,10 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "storage": storage,
         "event_bus": event_bus,
         "project_registry": None,
-        "project_threads_manager": None,
+        "project_channels_manager": None,
     }
 
     bot = ClaudeCodeBot(config, dependencies)
-
-    # Notification service and scheduler need the bot's Telegram Bot instance,
-    # which is only available after bot.initialize(). We store placeholders
-    # and wire them up in run_application() after initialization.
 
     logger.info("Application components created successfully")
 
@@ -222,9 +222,7 @@ async def run_application(app: Dict[str, Any]) -> None:
 
     notification_service: Optional[NotificationService] = None
     scheduler: Optional[JobScheduler] = None
-    project_threads_manager: Optional[ProjectThreadManager] = None
 
-    # Set up signal handlers for graceful shutdown
     shutdown_event = asyncio.Event()
 
     def signal_handler(signum: int, frame: Any) -> None:
@@ -235,50 +233,42 @@ async def run_application(app: Dict[str, Any]) -> None:
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        logger.info("Starting Claude Code Telegram Bot")
+        logger.info("Starting Claude Code Slack Bot")
 
-        # Initialize the bot first (creates the Telegram Application)
+        # Initialize the bot first (creates the Slack Bolt App)
         await bot.initialize()
 
-        if config.enable_project_threads:
+        # Create Slack WebClient (shared for notifications + channel management)
+        slack_client = AsyncWebClient(token=config.slack_bot_token_str)
+
+        if config.enable_project_channels:
             if not config.projects_config_path:
                 raise ConfigurationError(
-                    "Project thread mode enabled but required settings are missing"
+                    "Project channel mode enabled but required settings are missing"
                 )
             registry = load_project_registry(
                 config_path=config.projects_config_path,
                 approved_directory=config.approved_directory,
             )
-            project_threads_manager = ProjectThreadManager(
+
+            from src.projects import ProjectChannelManager
+
+            channel_manager = ProjectChannelManager(
                 registry=registry,
                 repository=storage.project_threads,
             )
 
             bot.deps["project_registry"] = registry
-            bot.deps["project_threads_manager"] = project_threads_manager
+            bot.deps["project_channels_manager"] = channel_manager
 
-            if config.project_threads_mode == "group":
-                if config.project_threads_chat_id is None:
-                    raise ConfigurationError(
-                        "Group thread mode requires PROJECT_THREADS_CHAT_ID"
-                    )
-                sync_result = await project_threads_manager.sync_topics(
-                    bot.app.bot,
-                    chat_id=config.project_threads_chat_id,
-                )
-                logger.info(
-                    "Project thread startup sync complete",
-                    mode=config.project_threads_mode,
-                    chat_id=config.project_threads_chat_id,
-                    created=sync_result.created,
-                    reused=sync_result.reused,
-                    renamed=sync_result.renamed,
-                    failed=sync_result.failed,
-                    deactivated=sync_result.deactivated,
-                )
-
-        # Now wire up components that need the Telegram Bot instance
-        telegram_bot = bot.app.bot
+            # Sync channels on startup (creates missing ones)
+            sync_result = await channel_manager.sync_channels(slack_client)
+            logger.info(
+                "Project channel sync complete",
+                created=sync_result.created,
+                reused=sync_result.reused,
+                failed=sync_result.failed,
+            )
 
         # Start event bus
         await event_bus.start()
@@ -286,8 +276,8 @@ async def run_application(app: Dict[str, Any]) -> None:
         # Notification service
         notification_service = NotificationService(
             event_bus=event_bus,
-            bot=telegram_bot,
-            default_chat_ids=config.notification_chat_ids or [],
+            client=slack_client,
+            default_channel_ids=config.notification_channel_ids or [],
         )
         notification_service.register()
         await notification_service.start()
@@ -295,7 +285,7 @@ async def run_application(app: Dict[str, Any]) -> None:
         # Collect concurrent tasks
         tasks = []
 
-        # Bot task — use start() which handles its own initialization check
+        # Bot task
         bot_task = asyncio.create_task(bot.start())
         tasks.append(bot_task)
 
@@ -317,6 +307,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 default_working_directory=config.approved_directory,
             )
             await scheduler.start()
+            bot.deps["scheduler"] = scheduler
             logger.info("Job scheduler enabled")
 
         # Shutdown task
@@ -326,7 +317,6 @@ async def run_application(app: Dict[str, Any]) -> None:
         # Wait for any task to complete or shutdown signal
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
-        # Check completed tasks for exceptions
         for task in done:
             if task.cancelled():
                 continue
@@ -339,7 +329,6 @@ async def run_application(app: Dict[str, Any]) -> None:
                     error_type=type(exc).__name__,
                 )
 
-        # Cancel remaining tasks
         for task in pending:
             task.cancel()
             try:
@@ -351,7 +340,6 @@ async def run_application(app: Dict[str, Any]) -> None:
         logger.error("Application error", error=str(e))
         raise
     finally:
-        # Ordered shutdown: scheduler -> API -> notification -> bot -> claude -> storage
         logger.info("Shutting down application")
 
         try:
@@ -375,10 +363,9 @@ async def main() -> None:
     setup_logging(debug=args.debug)
 
     logger = structlog.get_logger()
-    logger.info("Starting Claude Code Telegram Bot", version=__version__)
+    logger.info("Starting Claude Code Slack Bot", version=__version__)
 
     try:
-        # Load configuration
         from src.config import FeatureFlags, load_config
 
         config = load_config(config_file=args.config_file)
@@ -391,7 +378,6 @@ async def main() -> None:
             debug=config.debug,
         )
 
-        # Initialize bot and Claude integration
         app = await create_application(config)
         await run_application(app)
 

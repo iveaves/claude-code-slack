@@ -10,7 +10,7 @@ Features:
 
 import json
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Optional
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,16 +31,21 @@ from src.utils.constants import (
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Bot settings
-    telegram_bot_token: SecretStr = Field(
-        ..., description="Telegram bot token from BotFather"
+    # Slack settings
+    slack_bot_token: SecretStr = Field(
+        ..., description="Slack Bot User OAuth Token (xoxb-...)"
     )
-    telegram_bot_username: str = Field(..., description="Bot username without @")
+    slack_app_token: SecretStr = Field(
+        ..., description="Slack App-Level Token for Socket Mode (xapp-...)"
+    )
+    slack_signing_secret: Optional[SecretStr] = Field(
+        None, description="Slack Signing Secret (for future HTTP mode)"
+    )
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")
-    allowed_users: Optional[List[int]] = Field(
-        None, description="Allowed Telegram user IDs"
+    allowed_users: Optional[List[str]] = Field(
+        None, description="Allowed Slack user IDs (e.g. U01ABC123)"
     )
     enable_token_auth: bool = Field(
         False, description="Enable token-based authentication"
@@ -60,6 +65,13 @@ class Settings(BaseSettings):
         False,
         description="Allow all Claude tools by bypassing tool validation checks",
     )
+    development_mode: bool = Field(
+        False,
+        description=(
+            "Development mode: allow access outside approved directory with warnings. "
+            "Never enable in production."
+        ),
+    )
 
     # Claude settings
     claude_binary_path: Optional[str] = Field(
@@ -67,6 +79,9 @@ class Settings(BaseSettings):
     )
     claude_cli_path: Optional[str] = Field(
         None, description="Path to Claude CLI executable"
+    )
+    use_sdk: bool = Field(
+        True, description="Use Python SDK (true) or CLI subprocess (false)"
     )
     anthropic_api_key: Optional[SecretStr] = Field(
         None,
@@ -101,6 +116,12 @@ class Settings(BaseSettings):
             "TodoRead",
             "TodoWrite",
             "WebSearch",
+            "AskUserQuestion",
+            "Skill",
+            "ScheduleJob",
+            "ListScheduledJobs",
+            "RemoveScheduledJob",
+            "SlackFileUpload",
         ],
         description="List of allowed Claude tools",
     )
@@ -181,11 +202,6 @@ class Settings(BaseSettings):
     debug: bool = Field(False, description="Enable debug mode")
     development_mode: bool = Field(False, description="Enable development features")
 
-    # Webhook settings (optional)
-    webhook_url: Optional[str] = Field(None, description="Webhook URL for bot")
-    webhook_port: int = Field(8443, description="Webhook port")
-    webhook_path: str = Field("/webhook", description="Webhook path")
-
     # Agentic platform settings
     enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
     api_server_port: int = Field(8080, description="Webhook API server port")
@@ -196,40 +212,33 @@ class Settings(BaseSettings):
     webhook_api_secret: Optional[str] = Field(
         None, description="Shared secret for generic webhook providers"
     )
-    notification_chat_ids: Optional[List[int]] = Field(
-        None, description="Default Telegram chat IDs for proactive notifications"
+    notification_channel_ids: Optional[List[str]] = Field(
+        None, description="Default Slack channel IDs for proactive notifications"
     )
-    enable_project_threads: bool = Field(
+
+    # Project channel mode
+    enable_project_channels: bool = Field(
         False,
-        description="Enable strict routing by Telegram forum project threads",
-    )
-    project_threads_mode: Literal["private", "group"] = Field(
-        "private",
-        description="Project thread mode: private chat topics or group forum topics",
-    )
-    project_threads_chat_id: Optional[int] = Field(
-        None, description="Telegram forum chat ID where project topics are managed"
+        description="Enable strict routing by Slack project channels",
     )
     projects_config_path: Optional[Path] = Field(
-        None, description="Path to YAML project registry for thread mode"
+        None, description="Path to YAML project registry for channel mode"
     )
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", "notification_chat_ids", mode="before")
+    @field_validator("allowed_users", "notification_channel_ids", mode="before")
     @classmethod
-    def parse_int_list(cls, v: Any) -> Optional[List[int]]:
-        """Parse comma-separated integer lists."""
+    def parse_str_list(cls, v: Any) -> Optional[List[str]]:
+        """Parse comma-separated string lists."""
         if v is None:
             return None
-        if isinstance(v, int):
-            return [v]
         if isinstance(v, str):
-            return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
+            return [uid.strip() for uid in v.split(",") if uid.strip()]
         if isinstance(v, list):
-            return [int(uid) for uid in v]
+            return [str(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
     @field_validator("claude_allowed_tools", mode="before")
@@ -262,13 +271,12 @@ class Settings(BaseSettings):
     @classmethod
     def validate_mcp_config(cls, v: Any, info: Any) -> Optional[Path]:
         """Validate MCP configuration path if MCP is enabled."""
-        if not v:
-            return v  # type: ignore[no-any-return]
+        if not v or (isinstance(v, str) and not v.strip()):
+            return None
         if isinstance(v, str):
             v = Path(v)
         if not v.exists():
             raise ValueError(f"MCP config file does not exist: {v}")
-        # Validate that the file contains valid JSON with mcpServers
         try:
             with open(v) as f:
                 config_data = json.load(f)
@@ -308,32 +316,6 @@ class Settings(BaseSettings):
             raise ValueError(f"Projects config path is not a file: {v}")
         return v  # type: ignore[no-any-return]
 
-    @field_validator("project_threads_mode", mode="before")
-    @classmethod
-    def validate_project_threads_mode(cls, v: Any) -> str:
-        """Validate project thread mode."""
-        if v is None:
-            return "private"
-        mode = str(v).strip().lower()
-        if mode not in {"private", "group"}:
-            raise ValueError("project_threads_mode must be one of ['private', 'group']")
-        return mode
-
-    @field_validator("project_threads_chat_id", mode="before")
-    @classmethod
-    def validate_project_threads_chat_id(cls, v: Any) -> Optional[int]:
-        """Allow empty chat ID for private mode by treating blank values as None."""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            value = v.strip()
-            if not value:
-                return None
-            return int(value)
-        if isinstance(v, int):
-            return v
-        return v  # type: ignore[no-any-return]
-
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: Any) -> str:
@@ -356,18 +338,10 @@ class Settings(BaseSettings):
         if self.enable_mcp and not self.mcp_config_path:
             raise ValueError("mcp_config_path required when enable_mcp is True")
 
-        if self.enable_project_threads:
-            if (
-                self.project_threads_mode == "group"
-                and self.project_threads_chat_id is None
-            ):
-                raise ValueError(
-                    "project_threads_chat_id required when "
-                    "project_threads_mode is 'group'"
-                )
+        if self.enable_project_channels:
             if not self.projects_config_path:
                 raise ValueError(
-                    "projects_config_path required when enable_project_threads is True"
+                    "projects_config_path required when enable_project_channels is True"
                 )
 
         return self
@@ -386,9 +360,14 @@ class Settings(BaseSettings):
         return None
 
     @property
-    def telegram_token_str(self) -> str:
-        """Get Telegram token as string."""
-        return self.telegram_bot_token.get_secret_value()
+    def slack_bot_token_str(self) -> str:
+        """Get Slack bot token as string."""
+        return self.slack_bot_token.get_secret_value()
+
+    @property
+    def slack_app_token_str(self) -> str:
+        """Get Slack app token as string."""
+        return self.slack_app_token.get_secret_value()
 
     @property
     def auth_secret_str(self) -> Optional[str]:
