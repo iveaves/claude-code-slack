@@ -1,4 +1,4 @@
-# Contributing to Claude Code Telegram Bot
+# Contributing to Claude Code Slack Bot
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
 
@@ -61,7 +61,7 @@ This project is currently under active development with the following status:
    src/
    ├── config/     # Configuration (✅ Complete)
    ├── security/   # Authentication & Security (✅ Complete)
-   ├── bot/        # Telegram bot (✅ Complete - TODO-4)  
+   ├── bot/        # Slack bot (✅ Complete - TODO-4)  
    ├── claude/     # Claude integration (✅ Complete - TODO-5)
    └── storage/    # Database (✅ Complete - TODO-6)
    ```
@@ -163,7 +163,7 @@ async def test_feature():
 
 ### Recently Completed ✅
 
-#### TODO-4: Telegram Bot Core
+#### TODO-4: Bot Core
 - ✅ Bot connection and handler registration
 - ✅ Command routing system
 - ✅ Message parsing and formatting
@@ -403,4 +403,4 @@ Contributors will be recognized in:
 - Project documentation
 - Release notes
 
-Thank you for contributing to Claude Code Telegram Bot! 🚀
+Thank you for contributing to Claude Code Slack Bot! 🚀

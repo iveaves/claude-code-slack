@@ -6,7 +6,7 @@
 
 - **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
 - **Poetry** -- Modern Python dependency management
-- **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
+- **Slack Bot Token** -- Get one from [api.slack.com/apps](https://t.me/botfather)
 - **Claude Authentication** -- Choose one method below
 
 ### 2. Claude Authentication Setup
@@ -42,7 +42,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 ### 3. Install the Bot
 
 ```bash
-git clone https://github.com/RichardAtCT/claude-code-slack.git
+git clone https://github.com/iveaves/claude-code-slack.git
 cd claude-code-slack
 make dev
 ```
@@ -57,15 +57,15 @@ nano .env
 **Required Configuration:**
 
 ```bash
-TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-TELEGRAM_BOT_USERNAME=your_bot_username
+SLACK_BOT_TOKEN=U01ABC1230:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+SLACK_APP_TOKEN=your_bot_username
 APPROVED_DIRECTORY=/path/to/your/projects
-ALLOWED_USERS=123456789  # Your Telegram user ID
+ALLOWED_USERS=U01ABC123  # Your Slack user ID
 ```
 
-### 5. Get Your Telegram User ID
+### 5. Get Your Slack User ID
 
-1. Message [@userinfobot](https://t.me/userinfobot) on Telegram
+1. In Slack, click a user profile → **Copy member ID**
 2. It will reply with your user ID number
 3. Add this number to your `ALLOWED_USERS` setting
 
@@ -78,7 +78,7 @@ make run          # Production
 
 ### 7. Test the Bot
 
-1. Find your bot on Telegram (search for your bot username)
+1. Find your bot in Slack (add it to a channel or DM it)
 2. Send `/start` to begin
 3. Try asking Claude a question about your project
 4. Use `/status` to check session info
@@ -106,7 +106,7 @@ API_SERVER_PORT=8080
 2. Add to your `.env`:
    ```bash
    GITHUB_WEBHOOK_SECRET=your-generated-secret
-   NOTIFICATION_CHAT_IDS=123456789  # Your Telegram chat ID for notifications
+   NOTIFICATION_CHANNEL_IDS=U01ABC123  # Your Slack channel ID for notifications
    ```
 
 3. In your GitHub repository, go to **Settings > Webhooks > Add webhook**:
@@ -149,17 +149,17 @@ Enable to run recurring Claude tasks on a cron schedule:
 
 ```bash
 ENABLE_SCHEDULER=true
-NOTIFICATION_CHAT_IDS=123456789  # Where to deliver results
+NOTIFICATION_CHANNEL_IDS=U01ABC123  # Where to deliver results
 ```
 
 Jobs are managed programmatically and persist in the SQLite database.
 
 ### Notification Recipients
 
-Configure which Telegram chats receive proactive notifications from webhooks and scheduled jobs:
+Configure which Slack channels receive proactive notifications from webhooks and scheduled jobs:
 
 ```bash
-NOTIFICATION_CHAT_IDS=123456789,987654321
+NOTIFICATION_CHANNEL_IDS=U01ABC123,U04XYZ789
 ```
 
 ## Advanced Configuration
@@ -183,7 +183,7 @@ APPROVED_DIRECTORY=/Users/yourname/projects
 #### User Access Control
 ```bash
 # Whitelist specific users (recommended)
-ALLOWED_USERS=123456789,987654321
+ALLOWED_USERS=U01ABC123,U04XYZ789
 
 # Optional: Token-based authentication
 ENABLE_TOKEN_AUTH=true
@@ -257,9 +257,9 @@ Bypass the keychain entirely by using a direct API key (Option B in the authenti
 ### Bot doesn't respond
 ```bash
 # Check your bot token
-echo $TELEGRAM_BOT_TOKEN
+echo $SLACK_BOT_TOKEN
 
-# Verify user ID (message @userinfobot)
+# Verify user ID (message Slack profile → Copy member ID)
 # Check bot logs
 make run-debug
 ```
@@ -301,4 +301,4 @@ ENABLE_TELEMETRY=true
 - **Documentation**: Check the main [README.md](../README.md)
 - **Configuration**: See [configuration.md](configuration.md) for all options
 - **Security**: See [SECURITY.md](../SECURITY.md) for security concerns
-- **Issues**: [Open an issue](https://github.com/RichardAtCT/claude-code-slack/issues)
+- **Issues**: [Open an issue](https://github.com/iveaves/claude-code-slack/issues)

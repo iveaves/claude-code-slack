@@ -1,6 +1,6 @@
 # Development Guide
 
-This document provides detailed information for developers working on the Claude Code Telegram Bot.
+This document provides detailed information for developers working on the Claude Code Slack Bot.
 
 ## Getting Started
 
@@ -92,7 +92,7 @@ src/
 │   ├── loader.py     # Environment detection and loading
 │   ├── environments.py # Environment-specific overrides
 │   └── features.py   # Feature flag management
-├── bot/              # Telegram bot implementation (✅ Complete)
+├── bot/              # Slack bot implementation (✅ Complete)
 │   ├── __init__.py
 │   ├── core.py       # Main bot class
 │   ├── handlers/     # Command and message handlers
@@ -278,7 +278,7 @@ We aim for >80% test coverage. Current coverage:
 - Security audit logging with risk assessment
 - Bot middleware framework for security integration
 
-#### TODO-4: Telegram Bot Core
+#### TODO-4: Slack Bot Core
 - Complete bot implementation with handler registration
 - Command routing system with comprehensive command set
 - Message parsing and intelligent response formatting
@@ -328,8 +328,8 @@ For development, set these in your `.env` file:
 
 ```bash
 # Required for basic functionality
-TELEGRAM_BOT_TOKEN=test_token_for_development
-TELEGRAM_BOT_USERNAME=test_bot
+SLACK_BOT_TOKEN=test_token_for_development
+SLACK_APP_TOKEN=test_bot
 APPROVED_DIRECTORY=/path/to/your/test/projects
 
 # Claude Authentication (choose one method)
@@ -353,8 +353,8 @@ ENABLE_QUICK_ACTIONS=true
 
 ```bash
 # Basic run with environment variables
-export TELEGRAM_BOT_TOKEN=test_token
-export TELEGRAM_BOT_USERNAME=test_bot  
+export SLACK_BOT_TOKEN=test_token
+export SLACK_APP_TOKEN=test_bot  
 export APPROVED_DIRECTORY=/tmp/test_projects
 make run-debug
 

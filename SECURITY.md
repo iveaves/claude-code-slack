@@ -8,10 +8,10 @@
 
 ## Security Model
 
-The Claude Code Telegram Bot implements a defense-in-depth security model with multiple layers:
+The Claude Code Slack Bot implements a defense-in-depth security model with multiple layers:
 
 ### 1. Authentication & Authorization
-- **User Whitelist**: Only pre-approved Telegram user IDs can access the bot
+- **User Whitelist**: Only pre-approved Slack user IDs can access the bot
 - **Token-Based Auth**: Optional token-based authentication for additional security
 - **Session Management**: Secure session handling with timeout and cleanup
 
@@ -19,6 +19,8 @@ The Claude Code Telegram Bot implements a defense-in-depth security model with m
 - **Approved Directory**: All operations confined to a pre-configured directory tree
 - **Path Validation**: Prevents directory traversal attacks (../../../etc/passwd)
 - **Permission Checks**: Validates file system permissions before operations
+
+> **Development Mode Override**: When `DEVELOPMENT_MODE=true`, the directory boundary is relaxed -- Claude can read and write files **outside** `APPROVED_DIRECTORY` with a warning logged. This also applies when `DISABLE_TOOL_VALIDATION=true`, which bypasses all tool validation including path checks. These flags exist for local development convenience but **must never be enabled in production**. Always verify your `.env` has `DEVELOPMENT_MODE=false` and `DISABLE_TOOL_VALIDATION=false` before deploying.
 
 ### 3. Input Validation
 - **Command Sanitization**: All user inputs sanitized to prevent injection attacks
@@ -66,7 +68,7 @@ All planned security features are implemented and active:
 APPROVED_DIRECTORY=/path/to/approved/projects
 
 # User access control
-ALLOWED_USERS=123456789,987654321  # Telegram user IDs
+ALLOWED_USERS=U01ABC123,U04XYZ789  # Slack user IDs
 
 # Optional: Token-based authentication
 ENABLE_TOKEN_AUTH=true
@@ -133,9 +135,9 @@ ENVIRONMENT=production  # Enables strict security defaults
 
 3. **User Management**
    ```bash
-   # Get Telegram User ID: message @userinfobot
+   # Get Slack User ID: Click profile → Copy member ID
    # Add to whitelist
-   export ALLOWED_USERS="123456789,987654321"
+   export ALLOWED_USERS="U01ABC123,U04XYZ789"
    ```
 
 4. **Monitoring**
@@ -169,7 +171,7 @@ ENVIRONMENT=production  # Enables strict security defaults
 ### Threats Outside Scope
 
 - Network-level attacks (handled by hosting infrastructure)
-- Telegram API vulnerabilities (handled by Telegram)
+- Slack API vulnerabilities (handled by Slack)
 - Host OS security (handled by system administration)
 
 ## Reporting a Vulnerability

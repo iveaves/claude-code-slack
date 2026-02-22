@@ -122,7 +122,7 @@ All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow(
 - Type hints required on all functions (`disallow_untyped_defs = true`)
 - Use `datetime.now(UTC)` not `datetime.utcnow()` (deprecated)
 - Message formatting: Slack mrkdwn (`*bold*`, `_italic_`, `` `code` ``, ` ```block``` `)
-- UI elements: Block Kit dicts (not Telegram InlineKeyboardMarkup)
+- UI elements: Block Kit dicts (not Telegram InlineKeyboardMarkup — this is a Slack bot)
 
 ## Adding a New Bot Command
 

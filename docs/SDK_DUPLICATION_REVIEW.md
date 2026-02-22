@@ -568,8 +568,8 @@ Before any refactor:
 
 | Date | PR | Findings Addressed | Summary |
 |------|:---:|:---:|---------|
-| 2026-02-20 | [#56](https://github.com/RichardAtCT/claude-code-slack/pull/56) | F1 (partial), F8, F9 | Migrated `query()` → `ClaudeSDKClient`, eliminated `temp_*` IDs and session swapping, uses `ResultMessage.result`, removed dead `active_sessions` state |
-| 2026-02-20 | [#59](https://github.com/RichardAtCT/claude-code-slack/pull/59) | F3 (complete), F5 (complete) | Deleted CLI subprocess backend (`integration.py`, `parser.py`), removed `use_sdk` flag, passed `disallowed_tools` to SDK, ~1,060 lines removed |
+| 2026-02-20 | [#56](https://github.com/iveaves/claude-code-slack/pull/56) | F1 (partial), F8, F9 | Migrated `query()` → `ClaudeSDKClient`, eliminated `temp_*` IDs and session swapping, uses `ResultMessage.result`, removed dead `active_sessions` state |
+| 2026-02-20 | [#59](https://github.com/iveaves/claude-code-slack/pull/59) | F3 (complete), F5 (complete) | Deleted CLI subprocess backend (`integration.py`, `parser.py`), removed `use_sdk` flag, passed `disallowed_tools` to SDK, ~1,060 lines removed |
 
 ### Next Steps
 

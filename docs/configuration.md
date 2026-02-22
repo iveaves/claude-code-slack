@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This document provides comprehensive information about configuring the Claude Code Telegram Bot.
+This document provides comprehensive information about configuring the Claude Code Slack Bot.
 
 ## Overview
 
@@ -25,9 +25,9 @@ Configuration is loaded in this order (later sources override earlier ones):
 ### Required Settings
 
 ```bash
-# Telegram Bot Configuration
-TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-TELEGRAM_BOT_USERNAME=your_bot_name
+# Slack Bot Configuration
+SLACK_BOT_TOKEN=U01ABC1230:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+SLACK_APP_TOKEN=your_bot_name
 
 # Security
 APPROVED_DIRECTORY=/path/to/your/projects
@@ -38,8 +38,8 @@ APPROVED_DIRECTORY=/path/to/your/projects
 #### User Access Control
 
 ```bash
-# Comma-separated list of allowed Telegram user IDs
-ALLOWED_USERS=123456789,987654321
+# Comma-separated list of allowed Slack user IDs
+ALLOWED_USERS=U01ABC123,U04XYZ789
 
 # Enable token-based authentication (requires AUTH_TOKEN_SECRET)
 ENABLE_TOKEN_AUTH=false
@@ -146,23 +146,23 @@ WEBHOOK_API_SECRET=your-secret       # Bearer token for generic providers
 ENABLE_SCHEDULER=false                # Enable cron job scheduler
 
 # Notifications
-NOTIFICATION_CHAT_IDS=123456,789012  # Default Telegram chat IDs for proactive notifications
+NOTIFICATION_CHANNEL_IDS=123456,789012  # Default Slack channel IDs for proactive notifications
 ```
 
 #### Project Thread Mode
 
 ```bash
-# Strict project routing via Telegram project topics
-ENABLE_PROJECT_THREADS=false
+# Strict project routing via Slack project channels
+ENABLE_PROJECT_CHANNELS=false
 
 # Mode: private (default) or group
-PROJECT_THREADS_MODE=private
+PROJECT_CHANNELS_MODE=private
 
 # YAML registry file with project slugs/names/paths
 PROJECTS_CONFIG_PATH=config/projects.yaml
 
-# Required only for PROJECT_THREADS_MODE=group
-PROJECT_THREADS_CHAT_ID=-1001234567890
+# Required only for PROJECT_CHANNELS_MODE=group
+PROJECT_THREADS_CHAT_ID=-100U01ABC1230
 ```
 
 `PROJECTS_CONFIG_PATH` schema:
@@ -175,11 +175,11 @@ projects:
     enabled: true
 ```
 
-When `ENABLE_PROJECT_THREADS=true`:
-- `PROJECT_THREADS_MODE=private`:
-  - `/start` and `/sync_threads` are allowed outside topics in private chat.
+When `ENABLE_PROJECT_CHANNELS=true`:
+- `PROJECT_CHANNELS_MODE=private`:
+  - `/start` and `/sync_channels` are allowed outside topics in private chat.
   - all other updates must be inside mapped project topics.
-- `PROJECT_THREADS_MODE=group`:
+- `PROJECT_CHANNELS_MODE=group`:
   - behavior remains forum-topic based using `PROJECT_THREADS_CHAT_ID`.
 
 #### Monitoring & Logging
@@ -208,7 +208,7 @@ DEVELOPMENT_MODE=false
 ENVIRONMENT=development
 ```
 
-#### Webhook (Telegram Polling vs Webhook)
+#### Webhook (Socket Mode vs HTTP)
 
 ```bash
 # Webhook URL for bot (leave empty for polling mode)
@@ -287,7 +287,7 @@ Available feature flags:
 - `quick_actions_enabled`: Quick action buttons
 - `telemetry_enabled`: Anonymous usage telemetry
 - `token_auth_enabled`: Token-based authentication
-- `webhook_enabled`: Telegram webhook mode (vs polling)
+- `webhook_enabled`: Slack Socket Mode
 - `development_features_enabled`: Development-only features
 
 ## Validation

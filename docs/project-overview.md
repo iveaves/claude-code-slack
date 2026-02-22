@@ -1,12 +1,12 @@
-# Claude Code Telegram Bot -- Project Overview
+# Claude Code Slack Bot -- Project Overview
 
 ## Project Description
 
-A Telegram bot that provides remote access to Claude Code, allowing developers to interact with their projects from anywhere. The default interaction model is **agentic mode** -- a conversational interface where users chat naturally with Claude. A classic terminal-like mode with 13 commands is also available.
+A Slack bot that provides remote access to Claude Code, allowing developers to interact with their projects from anywhere. The default interaction model is **agentic mode** -- a conversational interface where users chat naturally with Claude. A classic terminal-like mode with 13 commands is also available.
 
 ## Core Objectives
 
-1. **Remote Development Access**: Enable developers to use Claude Code from any device with Telegram
+1. **Remote Development Access**: Enable developers to use Claude Code from any device with Slack
 2. **Security-First Design**: Implement robust security boundaries to prevent unauthorized access
 3. **Conversational Interface**: Natural language interaction as the primary mode (agentic mode)
 4. **Session Persistence**: Maintain Claude Code context across conversations and project switches
@@ -38,7 +38,7 @@ A Telegram bot that provides remote access to Claude Code, allowing developers t
 - **Event Bus**: Async pub/sub system with typed event subscriptions
 - **Webhook API**: FastAPI server receiving GitHub and generic webhooks with signature verification
 - **Job Scheduler**: APScheduler cron jobs with persistent storage
-- **Notifications**: Rate-limited Telegram delivery for agent responses
+- **Notifications**: Rate-limited Slack delivery for agent responses
 
 ### Claude Code Integration
 - Full Claude Code SDK integration (CLI fallback)
@@ -91,21 +91,21 @@ A Telegram bot that provides remote access to Claude Code, allowing developers t
    - Persistent job storage in SQLite
 
 9. **Notifications** (`src/notifications/`)
-   - Rate-limited Telegram delivery
+   - Rate-limited Slack delivery
    - Message splitting and broadcast support
 
 ### Data Flow
 
 **Agentic mode (direct messages):**
 ```
-User Message -> Telegram -> Middleware Chain -> MessageOrchestrator
-    -> ClaudeIntegration.run_command() -> Response -> Telegram
+User Message -> Slack -> Middleware Chain -> MessageOrchestrator
+    -> ClaudeIntegration.run_command() -> Response -> Slack channel
 ```
 
 **External triggers (webhooks/scheduler):**
 ```
 Webhook/Cron -> EventBus -> AgentHandler -> ClaudeIntegration
-    -> AgentResponseEvent -> NotificationService -> Telegram
+    -> AgentResponseEvent -> NotificationService -> Slack
 ```
 
 ### Security Model
