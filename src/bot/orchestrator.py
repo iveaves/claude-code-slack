@@ -1090,27 +1090,28 @@ class MessageOrchestrator:
             except Exception:
                 pass
 
-    async def _download_slack_images(
-        self, files: List[Dict[str, Any]], client: AsyncWebClient
-    ) -> List[str]:
-        """Download image files from Slack and save to a temp directory.
+    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+    _ARCHIVE_EXTS = {".zip", ".tar", ".gz", ".bz2", ".xz", ".tgz"}
 
-        Returns list of absolute file paths that Claude can Read.
+    async def _download_slack_files(
+        self, files: List[Dict[str, Any]], client: AsyncWebClient
+    ) -> List[Dict[str, Any]]:
+        """Download files from Slack and save to a temp directory.
+
+        Returns list of dicts: {"path": str, "name": str, "category": str}
+        where category is "image", "text", "archive", or "binary".
         """
         import tempfile
 
         import aiohttp
 
-        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
-        saved: List[str] = []
-        tmp_dir = Path(tempfile.gettempdir()) / "claude-slack-images"
+        saved: List[Dict[str, Any]] = []
+        tmp_dir = Path(tempfile.gettempdir()) / "claude-slack-files"
         tmp_dir.mkdir(exist_ok=True)
 
         for f in files:
-            name = f.get("name", "image")
+            name = f.get("name", "file")
             ext = Path(name).suffix.lower()
-            if ext not in image_exts:
-                continue
 
             url = f.get("url_private_download") or f.get("url_private")
             if not url:
@@ -1124,16 +1125,118 @@ class MessageOrchestrator:
                             continue
                         data = await resp.read()
 
-                dest = tmp_dir / f"{f.get('id', 'img')}_{name}"
+                dest = tmp_dir / f"{f.get('id', 'file')}_{name}"
                 dest.write_bytes(data)
-                saved.append(str(dest))
-                logger.info("Downloaded Slack image", filename=name, path=str(dest))
+
+                # Categorize the file
+                if ext in self._IMAGE_EXTS:
+                    category = "image"
+                elif ext in self._ARCHIVE_EXTS:
+                    category = "archive"
+                else:
+                    # Probe for text vs binary
+                    try:
+                        data.decode("utf-8")
+                        category = "text"
+                    except UnicodeDecodeError:
+                        category = "binary"
+
+                saved.append({"path": str(dest), "name": name, "category": category})
+                logger.info(
+                    "Downloaded Slack file",
+                    filename=name,
+                    category=category,
+                    path=str(dest),
+                )
             except Exception as e:
                 logger.warning(
-                    "Failed to download Slack image", filename=name, error=str(e)
+                    "Failed to download Slack file", filename=name, error=str(e)
                 )
 
         return saved
+
+    def _build_file_prompt(self, downloaded: List[Dict[str, Any]]) -> str:
+        """Build a Claude prompt section for downloaded files by category."""
+        parts: List[str] = []
+        for f in downloaded:
+            path, name, cat = f["path"], f["name"], f["category"]
+            if cat == "image":
+                parts.append(f"- `{path}` (image — use Read tool to view)")
+            elif cat == "text":
+                # Inline small text files, reference large ones
+                try:
+                    content = Path(path).read_text(encoding="utf-8", errors="ignore")
+                    if len(content) > 50000:
+                        content = content[:50000] + "\n... (truncated)"
+                    parts.append(f"File `{name}`:\n```\n{content}\n```")
+                except Exception:
+                    parts.append(f"- `{path}` (text file — use Read tool)")
+            elif cat == "archive":
+                summary = self._extract_archive_summary(path)
+                parts.append(f"Archive `{name}`:\n{summary}")
+            else:
+                # binary (PDF, docx, etc.) — Claude can Read PDFs natively
+                parts.append(f"- `{path}` (binary file — use Read tool to inspect)")
+
+        return "\n\nThe user attached these files:\n" + "\n".join(parts)
+
+    def _extract_archive_summary(self, archive_path: str) -> str:
+        """Extract a zip/tar archive to temp dir and return a file tree summary."""
+        import shutil
+        import tarfile
+        import uuid
+        import zipfile
+
+        arc = Path(archive_path)
+        extract_dir = arc.parent / f"extract_{uuid.uuid4().hex[:8]}"
+        extract_dir.mkdir(exist_ok=True)
+
+        try:
+            if arc.suffix == ".zip":
+                with zipfile.ZipFile(arc) as zf:
+                    total = sum(i.file_size for i in zf.filelist)
+                    if total > 100 * 1024 * 1024:
+                        return "(archive too large to extract — >100MB)"
+                    for info in zf.filelist:
+                        fp = Path(info.filename)
+                        if fp.is_absolute() or ".." in fp.parts:
+                            continue
+                        target = extract_dir / fp
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if not info.is_dir():
+                            with zf.open(info) as src, open(target, "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+            elif arc.suffix in {".tar", ".gz", ".bz2", ".xz", ".tgz"}:
+                with tarfile.open(arc) as tf:
+                    total = sum(m.size for m in tf.getmembers())
+                    if total > 100 * 1024 * 1024:
+                        return "(archive too large to extract — >100MB)"
+                    for member in tf.getmembers():
+                        if member.name.startswith("/") or ".." in member.name:
+                            continue
+                        tf.extract(member, extract_dir)
+            else:
+                return f"(unsupported archive format: {arc.suffix})"
+
+            # Build file tree
+            lines: List[str] = []
+            for item in sorted(extract_dir.rglob("*")):
+                if item.is_file():
+                    rel = item.relative_to(extract_dir)
+                    size = item.stat().st_size
+                    lines.append(f"  {rel} ({size} bytes)")
+            tree = "\n".join(lines[:100])  # cap at 100 entries
+            if len(lines) > 100:
+                tree += f"\n  ... and {len(lines) - 100} more files"
+
+            # Provide the extract path so Claude can Read individual files
+            return (
+                f"Extracted to `{extract_dir}` ({len(lines)} files):\n"
+                f"```\n{tree}\n```\n"
+                f"Use Read tool on files inside `{extract_dir}` to inspect contents."
+            )
+        except Exception as e:
+            return f"(failed to extract archive: {e})"
 
     async def agentic_text(
         self,
@@ -1159,17 +1262,14 @@ class MessageOrchestrator:
         if not user_id or (not message_text and not files):
             return
 
-        # If message has images, download and save them so Claude can Read them
+        # If message has files, download and build appropriate prompts
         if files:
-            image_paths = await self._download_slack_images(files, client)
-            if image_paths:
-                image_refs = "\n".join(
-                    f"- `{p}` (use Read tool to view this image)" for p in image_paths
-                )
-                image_prompt = f"\n\nThe user attached these images:\n{image_refs}"
+            downloaded = await self._download_slack_files(files, client)
+            if downloaded:
+                file_prompt = self._build_file_prompt(downloaded)
                 message_text = (
-                    message_text or "Please analyze these images."
-                ) + image_prompt
+                    message_text or "Please analyze these files."
+                ) + file_prompt
 
         user_state = context.get("user_state", {})
 
@@ -1381,27 +1481,46 @@ class MessageOrchestrator:
             url_private = file_info.get("url_private", "")
             if url_private:
                 import aiohttp
+                import tempfile
 
                 headers = {"Authorization": f"Bearer {client.token}"}
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url_private, headers=headers) as resp:
                         file_bytes = await resp.read()
 
-                try:
-                    content = file_bytes.decode("utf-8")
-                    if len(content) > 50000:
-                        content = content[:50000] + "\n... (truncated)"
+                ext = Path(filename).suffix.lower()
+
+                if ext in self._ARCHIVE_EXTS:
+                    # Save archive and extract summary
+                    tmp_dir = Path(tempfile.gettempdir()) / "claude-slack-files"
+                    tmp_dir.mkdir(exist_ok=True)
+                    dest = tmp_dir / f"{file_id}_{filename}"
+                    dest.write_bytes(file_bytes)
+                    summary = self._extract_archive_summary(str(dest))
                     prompt = (
-                        f"Please review this file:\n\n*File:* `{filename}`\n\n"
-                        f"```\n{content}\n```"
+                        f"The user uploaded an archive: `{filename}`\n\n{summary}"
                     )
-                except UnicodeDecodeError:
-                    await client.chat_update(
-                        channel=progress_channel,
-                        ts=progress_ts,
-                        text="Unsupported file format. Must be text-based (UTF-8).",
-                    )
-                    return
+                else:
+                    # Try text first, fall back to saving binary to disk
+                    try:
+                        content = file_bytes.decode("utf-8")
+                        if len(content) > 50000:
+                            content = content[:50000] + "\n... (truncated)"
+                        prompt = (
+                            f"Please review this file:\n\n*File:* `{filename}`\n\n"
+                            f"```\n{content}\n```"
+                        )
+                    except UnicodeDecodeError:
+                        # Binary file — save to temp and let Claude Read it
+                        tmp_dir = Path(tempfile.gettempdir()) / "claude-slack-files"
+                        tmp_dir.mkdir(exist_ok=True)
+                        dest = tmp_dir / f"{file_id}_{filename}"
+                        dest.write_bytes(file_bytes)
+                        prompt = (
+                            f"The user uploaded a file: `{filename}`\n"
+                            f"Saved to: `{dest}`\n"
+                            f"Use the Read tool to inspect this file."
+                        )
             else:
                 await client.chat_update(
                     channel=progress_channel,

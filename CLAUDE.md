@@ -114,6 +114,15 @@ Feature flags in `src/config/features.py` control: MCP, git integration, file up
 
 All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow()`). SQLite adapters auto-convert TIMESTAMP/DATETIME columns to `datetime` objects via `detect_types=PARSE_DECLTYPES`. Model `from_row()` methods must guard `fromisoformat()` calls with `isinstance(val, str)` checks.
 
+## Task Tracking Convention
+
+For non-trivial tasks, create a sub-directory under `.claude/tasks/` named after the task (e.g., `support_all_filetypes`). Each task directory contains:
+
+- `plan.md` — Implementation plan written before coding begins
+- `tasks.md` — Checklist tracking what's done and what remains
+
+Example: `.claude/tasks/support_all_filetypes/plan.md`
+
 ## Code Style
 
 - Black (88 char line length), isort (black profile), flake8, mypy strict, autoflake for unused imports
