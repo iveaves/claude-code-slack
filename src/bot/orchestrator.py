@@ -1304,6 +1304,41 @@ class MessageOrchestrator:
             logger.warning("Failed to fetch gap context", error=str(e))
             return None
 
+    async def _fetch_thread_parent(
+        self,
+        channel: str,
+        thread_ts: str,
+        client: AsyncWebClient,
+    ) -> Optional[str]:
+        """Fetch the parent message of a thread for context.
+
+        Returns a short context preamble, or None if unavailable.
+        """
+        try:
+            result = await client.conversations_replies(
+                channel=channel,
+                ts=thread_ts,
+                limit=1,
+                inclusive=True,
+            )
+            messages = result.get("messages", [])
+            if not messages:
+                return None
+
+            parent = messages[0]
+            user = parent.get("user", "someone")
+            text = parent.get("text", "")
+            if not text:
+                return None
+
+            return (
+                f"(This is a reply in a thread. The parent message "
+                f'from <@{user}> was: "{text}")\n\n'
+            )
+        except Exception as e:
+            logger.warning("Failed to fetch thread parent", error=str(e))
+            return None
+
     def _check_mention_required(
         self, message_text: str, channel: str, context: Dict[str, Any]
     ) -> Optional[str]:
@@ -1359,6 +1394,7 @@ class MessageOrchestrator:
         user_id = event.get("user", "")
         message_text = event.get("text", "")
         channel = event.get("channel", "")
+        thread_ts = event.get("thread_ts")
 
         # For file_share events, text may be empty — that's OK if there are files
         files = event.get("files", [])
@@ -1366,6 +1402,7 @@ class MessageOrchestrator:
             return
 
         # If channel requires mention, check and strip trigger prefix
+        # This applies to both top-level messages and thread replies
         checked = self._check_mention_required(message_text or "", channel, context)
         if checked is None:
             return  # not addressed to us
@@ -1395,24 +1432,38 @@ class MessageOrchestrator:
 
         user_state = context.get("user_state", {})
 
+        # If replying in a thread, fetch the parent message for context
+        if thread_ts:
+            parent_context = await self._fetch_thread_parent(channel, thread_ts, client)
+            if parent_context:
+                message_text = parent_context + message_text
+
         logger.info(
             "Agentic text message",
             user_id=user_id,
             message_length=len(message_text),
+            thread_ts=thread_ts,
         )
+
+        # Wrap say() to reply in the same thread when applicable
+        _say = say
+        if thread_ts:
+
+            async def _say(text="", **kw):
+                return await say(text=text, thread_ts=thread_ts, **kw)
 
         # Rate limit check
         rate_limiter = self.deps.get("rate_limiter")
         if rate_limiter:
             allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.001)
             if not allowed:
-                await say(f":hourglass: {limit_message}")
+                await _say(f":hourglass: {limit_message}")
                 return
 
         verbose_level = self._get_verbose_level(user_state)
 
         # Post initial progress message
-        result = await say("Working...")
+        result = await _say("Working...")
         progress_ts = result["ts"]
         progress_channel = result["channel"]
 
@@ -1521,7 +1572,7 @@ class MessageOrchestrator:
         last_say_ts: Optional[str] = None
         for i, message in enumerate(formatted_messages):
             try:
-                say_result = await say(text=message.text)
+                say_result = await _say(text=message.text)
                 if say_result and hasattr(say_result, "get"):
                     last_say_ts = say_result.get("ts")
                 if i < len(formatted_messages) - 1:
@@ -1533,7 +1584,7 @@ class MessageOrchestrator:
                     message_index=i,
                 )
                 try:
-                    await say(text="Failed to send response. Please try again.")
+                    await _say(text="Failed to send response. Please try again.")
                 except Exception:
                     pass
 
