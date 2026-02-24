@@ -17,6 +17,7 @@ class ProjectDefinition:
     absolute_path: Path
     channel_id: Optional[str] = None
     enabled: bool = True
+    require_mention: bool = False
 
 
 class ProjectRegistry:
@@ -81,6 +82,7 @@ def load_project_registry(
         if channel_id:
             channel_id = str(channel_id).strip() or None
         enabled = bool(raw.get("enabled", True))
+        require_mention = bool(raw.get("require_mention", False))
 
         if not slug:
             raise ValueError(f"Project entry at index {idx} is missing 'slug'")
@@ -129,6 +131,7 @@ def load_project_registry(
                 absolute_path=absolute_path,
                 channel_id=channel_id,
                 enabled=enabled,
+                require_mention=require_mention,
             )
         )
 

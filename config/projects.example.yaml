@@ -11,6 +11,8 @@
 #   path: directory path relative to APPROVED_DIRECTORY
 #   channel_id: Slack channel ID (e.g. C01ABC123)
 #   enabled: true/false
+#   require_mention: (optional, default false) only respond when message starts
+#     with "Pan" or @mentions the bot. Useful for shared channels.
 
 projects:
   - slug: claude-code-slack
@@ -24,3 +26,4 @@ projects:
     path: webapp
     channel_id: C9876543210
     enabled: true
+    require_mention: true  # shared channel — only respond when addressed

@@ -391,6 +391,25 @@ class ProjectThreadRepository:
             rows = await cursor.fetchall()
             return [ProjectThreadModel.from_row(row) for row in rows]
 
+    async def get_last_response_ts(self, channel_id: str) -> Optional[str]:
+        """Get persisted last_response_ts for a channel."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT last_response_ts FROM project_channels WHERE channel_id = ? AND is_active = TRUE",
+                (channel_id,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] else None
+
+    async def set_last_response_ts(self, channel_id: str, ts: str) -> None:
+        """Persist last_response_ts for a channel."""
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                "UPDATE project_channels SET last_response_ts = ? WHERE channel_id = ? AND is_active = TRUE",
+                (ts, channel_id),
+            )
+            await conn.commit()
+
 
 class MessageRepository:
     """Message data access."""

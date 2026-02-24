@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     slack_signing_secret: Optional[SecretStr] = Field(
         None, description="Slack Signing Secret (for future HTTP mode)"
     )
+    bot_name: str = Field(
+        "Pan",
+        description="Bot display name used for mention detection in require_mention channels",
+    )
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")

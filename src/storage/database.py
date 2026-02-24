@@ -310,6 +310,13 @@ class DatabaseManager:
                     ON project_channels(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- Persist last_response_ts for gap context across restarts
+                ALTER TABLE project_channels ADD COLUMN last_response_ts TEXT DEFAULT NULL;
+                """,
+            ),
         ]
 
     async def _init_pool(self):

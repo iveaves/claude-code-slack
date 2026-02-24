@@ -218,13 +218,21 @@ class MessageOrchestrator:
         if not self._is_within(current_dir, project_root) or not current_dir.is_dir():
             current_dir = project_root
 
+        # Load last_response_ts from DB if not in memory (survives restarts)
+        last_response_ts = state.get("last_response_ts")
+        if not last_response_ts:
+            repo = manager.repository
+            last_response_ts = await repo.get_last_response_ts(channel_id)
+
         user_state["current_directory"] = current_dir
         user_state["claude_session_id"] = state.get("claude_session_id")
+        user_state["last_response_ts"] = last_response_ts
         context["_channel_context"] = {
             "channel_id": channel_id,
             "project_slug": project.slug,
             "project_root": str(project_root),
             "project_name": project.name,
+            "require_mention": project.require_mention,
         }
         return True
 
@@ -244,10 +252,14 @@ class MessageOrchestrator:
             current_dir = project_root
 
         channel_states = user_state.setdefault("channel_state", {})
+        prev = channel_states.get(channel_id, {})
         channel_states[channel_id] = {
             "current_directory": str(current_dir),
             "claude_session_id": user_state.get("claude_session_id"),
             "project_slug": channel_context["project_slug"],
+            "last_response_ts": user_state.get(
+                "last_response_ts", prev.get("last_response_ts")
+            ),
         }
 
     @staticmethod
@@ -1238,6 +1250,97 @@ class MessageOrchestrator:
         except Exception as e:
             return f"(failed to extract archive: {e})"
 
+    async def _fetch_gap_context(
+        self,
+        channel: str,
+        last_response_ts: Optional[str],
+        client: AsyncWebClient,
+    ) -> Optional[str]:
+        """Fetch channel messages since the bot's last response.
+
+        Returns a formatted summary of the gap conversation, or None if
+        there's nothing to catch up on. When last_response_ts is None
+        (e.g. after a restart), fetches the most recent messages for
+        initial context.
+        """
+        if not last_response_ts:
+            return None
+
+        try:
+            result = await client.conversations_history(
+                channel=channel,
+                oldest=last_response_ts,
+                limit=50,
+                inclusive=False,
+            )
+            messages = result.get("messages", [])
+            if not messages:
+                return None
+
+            # Filter out bot messages — only include human conversation
+            human_msgs = [
+                m for m in messages if not m.get("bot_id") and m.get("text", "").strip()
+            ]
+            if not human_msgs:
+                return None
+
+            # Oldest first (Slack returns newest first)
+            human_msgs.reverse()
+
+            lines: List[str] = []
+            for m in human_msgs:
+                user = m.get("user", "someone")
+                text = m.get("text", "")
+                lines.append(f"<@{user}>: {text}")
+
+            context_block = "\n".join(lines)
+            return (
+                "Here is the recent conversation in this channel "
+                "since your last response (for context):\n\n"
+                f"{context_block}\n\n"
+                "Now the user is addressing you directly:\n"
+            )
+        except Exception as e:
+            logger.warning("Failed to fetch gap context", error=str(e))
+            return None
+
+    def _check_mention_required(
+        self, message_text: str, channel: str, context: Dict[str, Any]
+    ) -> Optional[str]:
+        """Check if this channel requires a mention to respond.
+
+        Returns the cleaned message (trigger stripped) if bot should respond,
+        or None if the message should be ignored. "Pan" can appear anywhere
+        in the message, not just at the start.
+        """
+        chan_ctx = context.get("_channel_context", {})
+        if not chan_ctx.get("require_mention"):
+            return message_text  # no filtering needed
+
+        # DMs always respond
+        if channel.startswith("D"):
+            return message_text
+
+        stripped = message_text.lstrip()
+        lower = stripped.lower()
+
+        # Check for bot name anywhere in message (case-insensitive, word boundary)
+        bot_name = self.settings.bot_name.lower()
+        name_pattern = r"\b" + re.escape(bot_name) + r"\b"
+        name_match = re.search(name_pattern, lower)
+        if name_match:
+            # Remove the trigger word from the message
+            start, end = name_match.start(), name_match.end()
+            cleaned = (stripped[:start] + stripped[end:]).strip(" ,:;-")
+            return cleaned or message_text
+
+        # Check for Slack @mention (<@U...>) anywhere
+        if re.search(r"<@U[A-Z0-9]+>", stripped):
+            remainder = re.sub(r"<@U[A-Z0-9]+>\s*", "", stripped).strip()
+            return remainder or message_text
+
+        return None  # ignore this message
+
     async def agentic_text(
         self,
         event: Dict[str, Any],
@@ -1261,6 +1364,25 @@ class MessageOrchestrator:
         files = event.get("files", [])
         if not user_id or (not message_text and not files):
             return
+
+        # If channel requires mention, check and strip trigger prefix
+        checked = self._check_mention_required(message_text or "", channel, context)
+        if checked is None:
+            return  # not addressed to us
+        message_text = checked
+
+        # For require_mention channels, fetch gap conversation for context
+        chan_ctx = context.get("_channel_context", {})
+        if chan_ctx.get("require_mention") and not channel.startswith("D"):
+            user_state_pre = context.get("user_state", {})
+            # Check flat key first (loaded from DB on restart), then nested channel state
+            last_ts = user_state_pre.get("last_response_ts")
+            if not last_ts:
+                ch_state = user_state_pre.get("channel_state", {}).get(channel, {})
+                last_ts = ch_state.get("last_response_ts")
+            gap = await self._fetch_gap_context(channel, last_ts, client)
+            if gap:
+                message_text = gap + message_text
 
         # If message has files, download and build appropriate prompts
         if files:
@@ -1396,9 +1518,12 @@ class MessageOrchestrator:
         except Exception:
             pass
 
+        last_say_ts: Optional[str] = None
         for i, message in enumerate(formatted_messages):
             try:
-                await say(text=message.text)
+                say_result = await say(text=message.text)
+                if say_result and hasattr(say_result, "get"):
+                    last_say_ts = say_result.get("ts")
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
             except Exception as e:
@@ -1411,6 +1536,17 @@ class MessageOrchestrator:
                     await say(text="Failed to send response. Please try again.")
                 except Exception:
                     pass
+
+        # Store timestamp of bot's last response for gap context (memory + DB)
+        if last_say_ts:
+            user_state["last_response_ts"] = last_say_ts
+            # Persist to DB so it survives restarts
+            manager = self.deps.get("project_channels_manager")
+            if manager and channel:
+                try:
+                    await manager.repository.set_last_response_ts(channel, last_say_ts)
+                except Exception:
+                    pass  # non-critical
 
         # Audit log
         audit_logger = self.deps.get("audit_logger")
@@ -1433,8 +1569,14 @@ class MessageOrchestrator:
         """Process file upload -> Claude, minimal chrome."""
         user_id = event.get("user_id") or event.get("user", "")
         file_id = event.get("file_id", "")
+        channel = event.get("channel_id") or event.get("channel", "")
 
         if not user_id or not file_id:
+            return
+
+        # In require_mention channels, ignore standalone file uploads
+        chan_ctx = context.get("_channel_context", {})
+        if chan_ctx.get("require_mention") and not channel.startswith("D"):
             return
 
         user_state = context.get("user_state", {})
@@ -1480,8 +1622,9 @@ class MessageOrchestrator:
         try:
             url_private = file_info.get("url_private", "")
             if url_private:
-                import aiohttp
                 import tempfile
+
+                import aiohttp
 
                 headers = {"Authorization": f"Bearer {client.token}"}
                 async with aiohttp.ClientSession() as session:
@@ -1497,9 +1640,7 @@ class MessageOrchestrator:
                     dest = tmp_dir / f"{file_id}_{filename}"
                     dest.write_bytes(file_bytes)
                     summary = self._extract_archive_summary(str(dest))
-                    prompt = (
-                        f"The user uploaded an archive: `{filename}`\n\n{summary}"
-                    )
+                    prompt = f"The user uploaded an archive: `{filename}`\n\n{summary}"
                 else:
                     # Try text first, fall back to saving binary to disk
                     try:
