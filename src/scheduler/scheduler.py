@@ -32,7 +32,11 @@ class JobScheduler:
         self.event_bus = event_bus
         self.db_manager = db_manager
         self.default_working_directory = default_working_directory
-        self._scheduler = AsyncIOScheduler()
+        # misfire_grace_time: if the bot was down when a job was due,
+        # still run it if we start within this window (3 hours).
+        self._scheduler = AsyncIOScheduler(
+            job_defaults={"misfire_grace_time": 3 * 60 * 60}
+        )
 
     async def start(self) -> None:
         """Load persisted jobs and start the scheduler."""
