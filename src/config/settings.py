@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         None, description="Slack Signing Secret (for future HTTP mode)"
     )
     bot_name: str = Field(
-        "Pan",
+        "claude",
         description="Bot display name used for mention detection in require_mention channels",
     )
 
