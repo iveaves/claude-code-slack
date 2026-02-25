@@ -283,7 +283,7 @@ class MessageOrchestrator:
         # Slash commands
         app.command("/start")(self._inject_deps(self.agentic_start))
         app.command("/new")(self._inject_deps(self.agentic_new))
-        app.command("/status")(self._inject_deps(self.agentic_status))
+        app.command("/stat")(self._inject_deps(self.agentic_status))
         app.command("/verbose")(self._inject_deps(self.agentic_verbose))
         app.command("/repo")(self._inject_deps(self.agentic_repo))
 

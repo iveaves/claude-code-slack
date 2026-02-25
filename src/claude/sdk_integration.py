@@ -260,6 +260,7 @@ class ClaudeSDKManager:
                 cli_path=cli_path,
                 permission_mode="bypassPermissions",
                 can_use_tool=_can_use_tool,
+                model=self.config.claude_model,
                 # Load user + project + local settings so skills are discovered
                 setting_sources=["user", "project", "local"],
                 sandbox={

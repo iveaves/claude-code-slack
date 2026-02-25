@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     use_sdk: bool = Field(
         True, description="Use Python SDK (true) or CLI subprocess (false)"
     )
+    claude_model: Optional[str] = Field(
+        None,
+        description="Claude model to use (e.g. claude-sonnet-4-6). Overrides CLI/project settings.",
+    )
     anthropic_api_key: Optional[SecretStr] = Field(
         None,
         description="Anthropic API key for SDK (optional if CLI logged in)",
