@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -363,10 +364,50 @@ async def run_application(app: Dict[str, Any]) -> None:
         logger.info("Application shutdown complete")
 
 
+PIDFILE = Path("data/bot.pid")
+
+
+def _acquire_pidfile() -> None:
+    """Kill any existing bot instance and write our PID.
+
+    Prevents duplicate Socket Mode connections which cause double responses.
+    """
+    if PIDFILE.exists():
+        try:
+            old_pid = int(PIDFILE.read_text().strip())
+            # Check if old process is actually a bot (not a recycled PID)
+            try:
+                os.kill(old_pid, 0)  # probe — doesn't actually kill
+                # Process exists, kill it
+                os.kill(old_pid, signal.SIGTERM)
+                import time
+
+                time.sleep(2)  # give it time to shut down
+            except ProcessNotFoundError:
+                pass  # already dead
+            except PermissionError:
+                pass  # different user's process, skip
+        except (ValueError, OSError):
+            pass  # corrupt PID file, ignore
+
+    PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    PIDFILE.write_text(str(os.getpid()))
+
+
+def _release_pidfile() -> None:
+    """Remove PID file on shutdown."""
+    try:
+        PIDFILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 async def main() -> None:
     """Main application entry point."""
     args = parse_args()
     setup_logging(debug=args.debug)
+
+    _acquire_pidfile()
 
     logger = structlog.get_logger()
     logger.info("Starting Claude Code Slack Bot", version=__version__)
@@ -401,7 +442,9 @@ def run() -> None:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nShutdown requested by user")
-        sys.exit(0)
+    finally:
+        _release_pidfile()
+    sys.exit(0)
 
 
 if __name__ == "__main__":
