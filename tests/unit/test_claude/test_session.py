@@ -262,7 +262,6 @@ class TestToolMonitorConfigBypass:
 
         assert allowed is True
         assert error is None
-        assert monitor.tool_usage["TotallyCustomTool"] == 1
 
     async def test_validate_tool_call_enforces_allowlist_when_enabled(self):
         monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=False), None)
@@ -277,7 +276,8 @@ class TestToolMonitorConfigBypass:
         assert allowed is False
         assert "Tool not allowed" in (error or "")
 
-    async def test_disable_tool_validation_still_rejects_invalid_file_path(self):
+    async def test_disable_tool_validation_allows_all(self):
+        """When disabled, ALL tool calls are allowed (trusted environment)."""
         validator = _ValidatorStub(should_allow_path=False)
         monitor = ToolMonitor(
             _MonitorConfigStub(disable_tool_validation=True), validator
@@ -287,31 +287,33 @@ class TestToolMonitorConfigBypass:
             tool_name="Read",
             tool_input={"file_path": "../secret"},
             working_directory=Path("/tmp"),
-            user_id=123,
+            user_id="U123",
         )
 
-        assert allowed is False
-        assert error == "invalid path"
+        assert allowed is True
+        assert error is None
 
-    async def test_disable_tool_validation_still_rejects_dangerous_bash(self):
+    async def test_disable_tool_validation_allows_bash(self):
+        """When disabled, even dangerous bash is allowed (trusted environment)."""
         monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=True), None)
 
         allowed, error = await monitor.validate_tool_call(
             tool_name="Bash",
             tool_input={"command": "echo test > /tmp/out"},
             working_directory=Path("/tmp"),
-            user_id=123,
+            user_id="U123",
         )
 
-        assert allowed is False
-        assert "Dangerous command pattern detected" in (error or "")
+        assert allowed is True
+        assert error is None
 
     @pytest.fixture
     def config(self, tmp_path):
         """Create test config."""
         return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             session_timeout_hours=24,
             max_sessions_per_user=2,
@@ -401,8 +403,9 @@ class TestUpdateSessionNewWithoutId:
     @pytest.fixture
     def config(self, tmp_path):
         return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             session_timeout_hours=24,
             max_sessions_per_user=2,

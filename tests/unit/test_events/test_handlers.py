@@ -28,7 +28,7 @@ def agent_handler(event_bus: EventBus, mock_claude: AsyncMock) -> AgentHandler:
         event_bus=event_bus,
         claude_integration=mock_claude,
         default_working_directory=Path("/tmp/test"),
-        default_user_id=42,
+        default_user_id="U01TEST",
     )
     handler.register()
     return handler
@@ -92,7 +92,7 @@ class TestAgentHandler:
         event = ScheduledEvent(
             job_name="standup",
             prompt="Generate daily standup",
-            target_chat_ids=[100],
+            target_channel_ids=["C01TEST"],
         )
 
         await agent_handler.handle_scheduled(event)
@@ -102,7 +102,7 @@ class TestAgentHandler:
 
         response_events = [e for e in published if isinstance(e, AgentResponseEvent)]
         assert len(response_events) == 1
-        assert response_events[0].chat_id == 100
+        assert response_events[0].channel_id == "C01TEST"
 
     async def test_scheduled_event_with_skill(
         self, event_bus: EventBus, mock_claude: AsyncMock, agent_handler: AgentHandler
@@ -116,7 +116,7 @@ class TestAgentHandler:
             job_name="standup",
             prompt="morning report",
             skill_name="daily-standup",
-            target_chat_ids=[100],
+            target_channel_ids=["C01TEST"],
         )
 
         await agent_handler.handle_scheduled(event)

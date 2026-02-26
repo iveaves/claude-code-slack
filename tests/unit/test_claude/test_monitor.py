@@ -195,8 +195,8 @@ class TestToolMonitorBashBoundary:
         monkeypatch.delenv("DISABLE_TOOL_VALIDATION", raising=False)
         return Settings(
             _env_file=None,
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
         )
 

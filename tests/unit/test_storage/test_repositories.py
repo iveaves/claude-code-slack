@@ -84,7 +84,7 @@ class TestUserRepository:
     async def test_create_and_get_user(self, user_repo):
         """Test creating and retrieving user."""
         user = UserModel(
-            user_id=12345,
+            user_id="U12345",
             telegram_username="testuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -93,19 +93,19 @@ class TestUserRepository:
 
         # Create user
         created_user = await user_repo.create_user(user)
-        assert created_user.user_id == 12345
+        assert created_user.user_id == "U12345"
 
         # Get user
-        retrieved_user = await user_repo.get_user(12345)
+        retrieved_user = await user_repo.get_user("U12345")
         assert retrieved_user is not None
-        assert retrieved_user.user_id == 12345
+        assert retrieved_user.user_id == "U12345"
         assert retrieved_user.telegram_username == "testuser"
         assert retrieved_user.is_allowed == 1  # SQLite stores boolean as integer
 
     async def test_update_user(self, user_repo):
         """Test updating user."""
         user = UserModel(
-            user_id=12346,
+            user_id="U12346",
             telegram_username="testuser2",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -122,7 +122,7 @@ class TestUserRepository:
         await user_repo.update_user(user)
 
         # Verify update
-        updated_user = await user_repo.get_user(12346)
+        updated_user = await user_repo.get_user("U12346")
         assert updated_user.total_cost == 20.0
         assert updated_user.message_count == 10
 
@@ -130,7 +130,7 @@ class TestUserRepository:
         """Test getting allowed users."""
         # Create allowed user
         allowed_user = UserModel(
-            user_id=12347,
+            user_id="U12347",
             telegram_username="allowed",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -140,7 +140,7 @@ class TestUserRepository:
 
         # Create disallowed user
         disallowed_user = UserModel(
-            user_id=12348,
+            user_id="U12348",
             telegram_username="disallowed",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -150,8 +150,8 @@ class TestUserRepository:
 
         # Get allowed users
         allowed_users = await user_repo.get_allowed_users()
-        assert 12347 in allowed_users
-        assert 12348 not in allowed_users
+        assert "U12347" in allowed_users
+        assert "U12348" not in allowed_users
 
 
 class TestSessionRepository:
@@ -161,7 +161,7 @@ class TestSessionRepository:
         """Test creating and retrieving session."""
         # Create user first
         user = UserModel(
-            user_id=12349,
+            user_id="U12349",
             telegram_username="sessionuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -172,7 +172,7 @@ class TestSessionRepository:
         # Create session
         session = SessionModel(
             session_id="test-session-123",
-            user_id=12349,
+            user_id="U12349",
             project_path="/test/project",
             created_at=datetime.now(UTC),
             last_used=datetime.now(UTC),
@@ -187,14 +187,14 @@ class TestSessionRepository:
         # Get session
         retrieved_session = await session_repo.get_session("test-session-123")
         assert retrieved_session is not None
-        assert retrieved_session.user_id == 12349
+        assert retrieved_session.user_id == "U12349"
         assert retrieved_session.project_path == "/test/project"
 
     async def test_get_user_sessions(self, session_repo, user_repo):
         """Test getting user sessions."""
         # Create user
         user = UserModel(
-            user_id=12350,
+            user_id="U12350",
             telegram_username="multisessionuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -206,7 +206,7 @@ class TestSessionRepository:
         for i in range(3):
             session = SessionModel(
                 session_id=f"test-session-{i}",
-                user_id=12350,
+                user_id="U12350",
                 project_path=f"/test/project{i}",
                 created_at=datetime.now(UTC),
                 last_used=datetime.now(UTC),
@@ -214,15 +214,15 @@ class TestSessionRepository:
             await session_repo.create_session(session)
 
         # Get user sessions
-        sessions = await session_repo.get_user_sessions(12350)
+        sessions = await session_repo.get_user_sessions("U12350")
         assert len(sessions) == 3
-        assert all(s.user_id == 12350 for s in sessions)
+        assert all(s.user_id == "U12350" for s in sessions)
 
     async def test_cleanup_old_sessions(self, session_repo, user_repo):
         """Test cleaning up old sessions."""
         # Create user
         user = UserModel(
-            user_id=12351,
+            user_id="U12351",
             telegram_username="cleanupuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -233,7 +233,7 @@ class TestSessionRepository:
         # Create old session
         old_session = SessionModel(
             session_id="old-session",
-            user_id=12351,
+            user_id="U12351",
             project_path="/test/old",
             created_at=datetime.now(UTC) - timedelta(days=35),
             last_used=datetime.now(UTC) - timedelta(days=35),
@@ -243,7 +243,7 @@ class TestSessionRepository:
         # Create recent session
         recent_session = SessionModel(
             session_id="recent-session",
-            user_id=12351,
+            user_id="U12351",
             project_path="/test/recent",
             created_at=datetime.now(UTC),
             last_used=datetime.now(UTC),
@@ -255,7 +255,9 @@ class TestSessionRepository:
         assert cleaned == 1
 
         # Check that only recent session is active
-        active_sessions = await session_repo.get_user_sessions(12351, active_only=True)
+        active_sessions = await session_repo.get_user_sessions(
+            "U12351", active_only=True
+        )
         assert len(active_sessions) == 1
         assert active_sessions[0].session_id == "recent-session"
 
@@ -267,7 +269,7 @@ class TestMessageRepository:
         """Test saving and retrieving messages."""
         # Setup user and session
         user = UserModel(
-            user_id=12352,
+            user_id="U12352",
             telegram_username="messageuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -277,7 +279,7 @@ class TestMessageRepository:
 
         session = SessionModel(
             session_id="message-session",
-            user_id=12352,
+            user_id="U12352",
             project_path="/test/messages",
             created_at=datetime.now(UTC),
             last_used=datetime.now(UTC),
@@ -287,7 +289,7 @@ class TestMessageRepository:
         # Save message
         message = MessageModel(
             session_id="message-session",
-            user_id=12352,
+            user_id="U12352",
             timestamp=datetime.now(UTC),
             prompt="Test prompt",
             response="Test response",
@@ -306,22 +308,22 @@ class TestMessageRepository:
 
 
 class TestProjectThreadRepository:
-    """Test project thread repository."""
+    """Test project channel repository."""
 
     async def test_upsert_and_lookup(self, project_thread_repo):
         """Upsert creates mapping and lookup resolves it."""
         mapping = await project_thread_repo.upsert_mapping(
             project_slug="app1",
-            chat_id=-1001234567890,
-            message_thread_id=321,
+            chat_id=0,
+            channel_id="C01APP1",
             topic_name="App One",
         )
 
         assert isinstance(mapping, ProjectThreadModel)
         assert mapping.project_slug == "app1"
-        assert mapping.message_thread_id == 321
+        assert mapping.channel_id == "C01APP1"
 
-        lookup = await project_thread_repo.get_by_chat_thread(-1001234567890, 321)
+        lookup = await project_thread_repo.get_by_channel_id("C01APP1")
         assert lookup is not None
         assert lookup.project_slug == "app1"
 
@@ -329,55 +331,57 @@ class TestProjectThreadRepository:
         """Mappings not in active set are deactivated."""
         await project_thread_repo.upsert_mapping(
             project_slug="app1",
-            chat_id=-1001234567890,
-            message_thread_id=111,
+            chat_id=0,
+            channel_id="C01APP1",
             topic_name="App 1",
         )
         await project_thread_repo.upsert_mapping(
             project_slug="app2",
-            chat_id=-1001234567890,
-            message_thread_id=222,
+            chat_id=0,
+            channel_id="C01APP2",
             topic_name="App 2",
         )
 
         changed = await project_thread_repo.deactivate_missing_projects(
-            chat_id=-1001234567890,
+            chat_id=0,
             active_project_slugs=["app1"],
         )
 
         assert changed == 1
-        inactive_mapping = await project_thread_repo.get_by_chat_project(
-            -1001234567890, "app2"
-        )
-        assert inactive_mapping is not None
-        assert inactive_mapping.is_active is False
+        # app2 should be deactivated (not returned by active-only queries)
+        active_mapping = await project_thread_repo.get_by_project_slug("app2")
+        assert active_mapping is None  # deactivated, so not found by active query
+        # app1 should still be active
+        app1 = await project_thread_repo.get_by_project_slug("app1")
+        assert app1 is not None
+        assert app1.is_active is True
 
     async def test_list_stale_active_mappings(self, project_thread_repo):
         """Returns only active mappings not in enabled project set."""
         await project_thread_repo.upsert_mapping(
             project_slug="app1",
-            chat_id=-1001234567890,
-            message_thread_id=111,
+            chat_id=0,
+            channel_id="C01APP1",
             topic_name="App 1",
             is_active=True,
         )
         await project_thread_repo.upsert_mapping(
             project_slug="app2",
-            chat_id=-1001234567890,
-            message_thread_id=222,
+            chat_id=0,
+            channel_id="C01APP2",
             topic_name="App 2",
             is_active=True,
         )
         await project_thread_repo.upsert_mapping(
             project_slug="app3",
-            chat_id=-1001234567890,
-            message_thread_id=333,
+            chat_id=0,
+            channel_id="C01APP3",
             topic_name="App 3",
             is_active=False,
         )
 
         stale = await project_thread_repo.list_stale_active_mappings(
-            chat_id=-1001234567890,
+            chat_id=0,
             active_project_slugs=["app1"],
         )
 
@@ -388,22 +392,22 @@ class TestProjectThreadRepository:
         """set_active toggles mapping active flag."""
         await project_thread_repo.upsert_mapping(
             project_slug="app1",
-            chat_id=-1001234567890,
-            message_thread_id=111,
+            chat_id=0,
+            channel_id="C01APP1",
             topic_name="App 1",
             is_active=True,
         )
 
         changed = await project_thread_repo.set_active(
-            chat_id=-1001234567890,
+            chat_id=0,
             project_slug="app1",
             is_active=False,
         )
 
         assert changed == 1
-        mapping = await project_thread_repo.get_by_chat_project(-1001234567890, "app1")
-        assert mapping is not None
-        assert mapping.is_active is False
+        # Should no longer be returned by active-only query
+        mapping = await project_thread_repo.get_by_project_slug("app1")
+        assert mapping is None
 
 
 class TestToolUsageRepository:
@@ -413,7 +417,7 @@ class TestToolUsageRepository:
         """Test saving and retrieving tool usage."""
         # Setup user and session
         user = UserModel(
-            user_id=12353,
+            user_id="U12353",
             telegram_username="tooluser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -423,7 +427,7 @@ class TestToolUsageRepository:
 
         session = SessionModel(
             session_id="tool-session",
-            user_id=12353,
+            user_id="U12353",
             project_path="/test/tools",
             created_at=datetime.now(UTC),
             last_used=datetime.now(UTC),
@@ -452,7 +456,7 @@ class TestToolUsageRepository:
         """Test getting tool statistics."""
         # Setup user and session
         user = UserModel(
-            user_id=12354,
+            user_id="U12354",
             telegram_username="statsuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -462,7 +466,7 @@ class TestToolUsageRepository:
 
         session = SessionModel(
             session_id="stats-session",
-            user_id=12354,
+            user_id="U12354",
             project_path="/test/stats",
             created_at=datetime.now(UTC),
             last_used=datetime.now(UTC),
@@ -499,7 +503,7 @@ class TestAnalyticsRepository:
         """Test getting system statistics."""
         # Setup test data
         user = UserModel(
-            user_id=12355,
+            user_id="U12355",
             telegram_username="analyticsuser",
             first_seen=datetime.now(UTC),
             last_active=datetime.now(UTC),
@@ -509,7 +513,7 @@ class TestAnalyticsRepository:
 
         session = SessionModel(
             session_id="analytics-session",
-            user_id=12355,
+            user_id="U12355",
             project_path="/test/analytics",
             created_at=datetime.now(UTC),
             last_used=datetime.now(UTC),
@@ -520,7 +524,7 @@ class TestAnalyticsRepository:
         for i in range(3):
             message = MessageModel(
                 session_id="analytics-session",
-                user_id=12355,
+                user_id="U12355",
                 timestamp=datetime.now(UTC),
                 prompt=f"Test prompt {i}",
                 response=f"Test response {i}",

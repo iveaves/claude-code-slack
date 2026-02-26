@@ -14,10 +14,10 @@ class TestEventTypes:
     """Tests for concrete event dataclasses."""
 
     def test_user_message_event_defaults(self) -> None:
-        event = UserMessageEvent(user_id=123, chat_id=456, text="hello")
-        assert event.source == "telegram"
-        assert event.user_id == 123
-        assert event.chat_id == 456
+        event = UserMessageEvent(user_id="U01ABC", channel_id="C01XYZ", text="hello")
+        assert event.source == "slack"
+        assert event.user_id == "U01ABC"
+        assert event.channel_id == "C01XYZ"
         assert event.text == "hello"
         assert event.event_type == "UserMessageEvent"
 
@@ -37,19 +37,19 @@ class TestEventTypes:
             job_id="j1",
             job_name="daily-standup",
             prompt="Generate standup",
-            target_chat_ids=[100, 200],
+            target_channel_ids=["C001", "C002"],
         )
         assert event.source == "scheduler"
-        assert event.target_chat_ids == [100, 200]
+        assert event.target_channel_ids == ["C001", "C002"]
 
     def test_agent_response_event(self) -> None:
         event = AgentResponseEvent(
-            chat_id=789,
+            channel_id="C789",
             text="Here's your summary",
             originating_event_id="orig-1",
         )
         assert event.source == "agent"
-        assert event.parse_mode == "HTML"
+        assert event.channel_id == "C789"
         assert event.originating_event_id == "orig-1"
 
     def test_scheduled_event_with_skill(self) -> None:
