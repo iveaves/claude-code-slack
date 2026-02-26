@@ -125,8 +125,7 @@ Example: `.claude/tasks/support_all_filetypes/plan.md`
 
 ## Git & Deploy Workflow
 
-- **Bug fixes** can be committed and pushed to `main` directly.
-- **New features** must be tested by the user before pushing to `main`. Commit locally, restart the bot, and let the user verify it works in Slack first. Only push after explicit user approval.
+- **Never push to `main` until the user has confirmed the change works.** Commit locally, restart the bot, and let the user verify in Slack first. Only push after explicit user approval. This applies to both bug fixes and new features.
 - The bot runs via `bin/run.sh` which auto-restarts on exit. To deploy changes: `kill $(cat data/bot.pid)` and the wrapper brings it back up in 3 seconds.
 
 ## Code Style
