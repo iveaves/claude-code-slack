@@ -77,8 +77,9 @@ class TestClaudeSDKManager:
     def config(self, tmp_path):
         """Create test config without API key."""
         return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,  # Short timeout for testing
         )
@@ -88,54 +89,48 @@ class TestClaudeSDKManager:
         """Create SDK manager."""
         return ClaudeSDKManager(config)
 
-    async def test_sdk_manager_initialization_with_api_key(self, tmp_path):
-        """Test SDK manager initialization with API key."""
+    async def test_sdk_manager_initialization_with_api_key(self, tmp_path, monkeypatch):
+        """Test SDK manager initialization with API key in .env."""
         from src.config.settings import Settings
 
-        # Test with API key provided
+        # ClaudeSDKManager reads the key from .env file directly,
+        # not from the Settings object. Patch _read_env_file_key to
+        # simulate a .env with a key present.
         config_with_key = Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
-            anthropic_api_key="test-api-key",
             claude_timeout_seconds=2,
         )
 
-        # Store original env var
-        original_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        try:
+        with patch.object(
+            ClaudeSDKManager,
+            "_read_env_file_key",
+            return_value="test-api-key",
+        ):
             ClaudeSDKManager(config_with_key)
 
-            # Check that API key was set in environment
-            assert os.environ.get("ANTHROPIC_API_KEY") == "test-api-key"
+        assert os.environ.get("ANTHROPIC_API_KEY") == "test-api-key"
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        finally:
-            # Restore original env var
-            if original_api_key:
-                os.environ["ANTHROPIC_API_KEY"] = original_api_key
-            elif "ANTHROPIC_API_KEY" in os.environ:
-                del os.environ["ANTHROPIC_API_KEY"]
-
-    async def test_sdk_manager_initialization_without_api_key(self, config):
+    async def test_sdk_manager_initialization_without_api_key(
+        self, config, monkeypatch
+    ):
         """Test SDK manager initialization without API key (uses CLI auth)."""
-        # Store original env var
-        original_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        try:
-            # Remove any existing API key
-            if "ANTHROPIC_API_KEY" in os.environ:
-                del os.environ["ANTHROPIC_API_KEY"]
-
+        with patch.object(
+            ClaudeSDKManager,
+            "_read_env_file_key",
+            return_value=None,
+        ):
             ClaudeSDKManager(config)
 
-            # Check that no API key was set (should use CLI auth)
-            assert config.anthropic_api_key_str is None
-
-        finally:
-            # Restore original env var
-            if original_api_key:
-                os.environ["ANTHROPIC_API_KEY"] = original_api_key
+        # No API key should be in environment
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
 
     async def test_execute_command_success(self, sdk_manager):
         """Test successful command execution."""
@@ -360,8 +355,9 @@ class TestClaudeSandboxSettings:
     def config(self, tmp_path):
         """Create test config with sandbox enabled."""
         return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,
             sandbox_enabled=True,
@@ -487,8 +483,9 @@ class TestClaudeMCPErrors:
     def config(self, tmp_path):
         """Create test config."""
         return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,
         )

@@ -35,7 +35,7 @@ def test_production_config():
     assert config_dict["development_mode"] is False
     assert config_dict["log_level"] == "INFO"
     assert config_dict["enable_telemetry"] is True
-    assert config_dict["claude_max_cost_per_user"] == 5.0
+    assert config_dict["claude_max_cost_per_user"] == 35.0
     assert config_dict["rate_limit_requests"] == 5
 
 

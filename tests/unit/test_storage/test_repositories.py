@@ -363,21 +363,23 @@ class TestProjectThreadRepository:
             chat_id=0,
             channel_id="C01APP1",
             topic_name="App 1",
-            is_active=True,
         )
         await project_thread_repo.upsert_mapping(
             project_slug="app2",
             chat_id=0,
             channel_id="C01APP2",
             topic_name="App 2",
-            is_active=True,
         )
+        # Insert app3 as active, then deactivate it (upsert requires active
+        # for the read-back verification step)
         await project_thread_repo.upsert_mapping(
             project_slug="app3",
             chat_id=0,
             channel_id="C01APP3",
             topic_name="App 3",
-            is_active=False,
+        )
+        await project_thread_repo.set_active(
+            chat_id=0, project_slug="app3", is_active=False
         )
 
         stale = await project_thread_repo.list_stale_active_mappings(
