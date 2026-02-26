@@ -151,9 +151,15 @@ class ClaudeSDKManager:
         explicit_key = self._read_env_file_key("ANTHROPIC_API_KEY", config)
         if explicit_key:
             os.environ["ANTHROPIC_API_KEY"] = explicit_key
-            logger.info("Using provided API key for Claude SDK authentication")
+            logger.info("Using API key from .env for Claude SDK authentication")
         else:
-            logger.info("No API key provided, using existing Claude CLI authentication")
+            # No API key — Claude CLI must be logged in via `claude login`.
+            # If scheduled jobs or agents fail with auth errors, verify CLI
+            # auth is valid by running: claude --version
+            logger.info(
+                "No API key in .env, using Claude CLI authentication "
+                "(ensure `claude login` has been run)"
+            )
 
     @staticmethod
     def _read_env_file_key(key: str, config: Settings) -> Optional[str]:
@@ -372,12 +378,23 @@ class ClaudeSDKManager:
                     previous_session_id=session_id,
                 )
 
-            # Use ResultMessage.result if available, fall back to message extraction
+            # Use ResultMessage.result if non-empty, fall back to message
+            # extraction.  With subscription/CLI auth the SDK may return
+            # result="" (empty string) even though AssistantMessage objects
+            # contain the actual response text.
             content = (
                 result_content
-                if result_content is not None
+                if result_content
                 else self._extract_content_from_messages(messages)
             )
+
+            if not content:
+                logger.warning(
+                    "Empty content after extraction",
+                    result_field=repr(result_content),
+                    message_count=len(messages),
+                    message_types=[type(m).__name__ for m in messages],
+                )
 
             # Clean ThinkingBlock wrapper remnants from final content
             # (thinking is shown in progress, not in final output)

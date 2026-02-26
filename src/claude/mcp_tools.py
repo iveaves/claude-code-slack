@@ -77,7 +77,14 @@ def create_bot_mcp_server(
                     },
                     "cron_expression": {
                         "type": "string",
-                        "description": "Cron schedule (e.g. '0 9 * * 1-5' for weekdays 9am, '*/30 * * * *' for every 30min)",
+                        "description": (
+                            "Standard 5-field crontab schedule. "
+                            "Day-of-week: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat "
+                            "(or named: SUN,MON,TUE,WED,THU,FRI,SAT). "
+                            "Examples: '0 9 * * 1-5' weekdays 9am, "
+                            "'0 10 * * 3' Wednesday 10am, "
+                            "'*/30 * * * *' every 30min"
+                        ),
                     },
                     "prompt": {
                         "type": "string",

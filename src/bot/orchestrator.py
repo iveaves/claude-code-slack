@@ -1071,10 +1071,19 @@ class MessageOrchestrator:
 
             from .utils.formatting import ResponseFormatter
 
+            response_text = claude_response.content or ""
+            if not response_text.strip():
+                logger.warning(
+                    "Scheduled prompt returned empty content",
+                    session_id=claude_response.session_id,
+                    num_turns=claude_response.num_turns,
+                )
+                response_text = (
+                    "_Scheduled job completed but returned no text output._"
+                )
+
             formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(
-                claude_response.content
-            )
+            formatted_messages = formatter.format_claude_response(response_text)
 
             # Delete progress message
             try:
@@ -1540,13 +1549,22 @@ class MessageOrchestrator:
                 except Exception as e:
                     logger.warning("Failed to log interaction", error=str(e))
 
-            # Format response
-            from .utils.formatting import ResponseFormatter
+            # Format response — guard against empty content so Slack
+            # doesn't reject the message with 'no_text'.
+            from .utils.formatting import FormattedMessage, ResponseFormatter
+
+            response_text = claude_response.content or ""
+            if not response_text.strip():
+                logger.warning(
+                    "Claude returned empty content",
+                    session_id=claude_response.session_id,
+                    num_turns=claude_response.num_turns,
+                    cost=claude_response.cost,
+                )
+                response_text = "_Claude completed the request but returned no text output._"
 
             formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(
-                claude_response.content
-            )
+            formatted_messages = formatter.format_claude_response(response_text)
 
         except ClaudeToolValidationError as e:
             success = False

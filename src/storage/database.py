@@ -317,6 +317,13 @@ class DatabaseManager:
                 ALTER TABLE project_channels ADD COLUMN last_response_ts TEXT DEFAULT NULL;
                 """,
             ),
+            (
+                6,
+                """
+                -- Track when each scheduled job last fired for misfire detection
+                ALTER TABLE scheduled_jobs ADD COLUMN last_fired_at TIMESTAMP DEFAULT NULL;
+                """,
+            ),
         ]
 
     async def _init_pool(self):

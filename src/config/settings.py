@@ -215,6 +215,10 @@ class Settings(BaseSettings):
     enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
     api_server_port: int = Field(8080, description="Webhook API server port")
     enable_scheduler: bool = Field(False, description="Enable job scheduler")
+    scheduler_timezone: str = Field(
+        "America/Los_Angeles",
+        description="IANA timezone for cron schedules (e.g. America/New_York)",
+    )
     github_webhook_secret: Optional[str] = Field(
         None, description="GitHub webhook HMAC secret"
     )

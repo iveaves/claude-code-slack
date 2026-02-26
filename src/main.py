@@ -312,6 +312,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 event_bus=event_bus,
                 db_manager=storage.db_manager,
                 default_working_directory=config.approved_directory,
+                timezone=config.scheduler_timezone,
             )
             await scheduler.start()
             bot.deps["scheduler"] = scheduler

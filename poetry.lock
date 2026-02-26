@@ -472,17 +472,17 @@ pycparser = {version = "*", markers = "implementation_name != \"PyPy\""}
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.1.39"
+version = "0.1.43"
 description = "Python SDK for Claude Code"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "claude_agent_sdk-0.1.39-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6ed6a79781f545b761b9fe467bc5ae213a103c9d3f0fe7a9dad3c01790ed58fa"},
-    {file = "claude_agent_sdk-0.1.39-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:0c03b5a3772eaec42e29ea39240c7d24b760358082f2e36336db9e71dde3dda4"},
-    {file = "claude_agent_sdk-0.1.39-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:d2665c9e87b6ffece590bcdd6eb9def47cde4809b0d2f66e0a61a719189be7c9"},
-    {file = "claude_agent_sdk-0.1.39-py3-none-win_amd64.whl", hash = "sha256:d03324daf7076be79d2dd05944559aabf4cc11c98d3a574b992a442a7c7a26d6"},
-    {file = "claude_agent_sdk-0.1.39.tar.gz", hash = "sha256:dcf0ebd5a638c9a7d9f3af7640932a9212b2705b7056e4f08bd3968a865b4268"},
+    {file = "claude_agent_sdk-0.1.43-py3-none-macosx_11_0_arm64.whl", hash = "sha256:4a2dd200241ae2378407302eb3654482dd7dd17a81a7f8d0746699cf9f6c327b"},
+    {file = "claude_agent_sdk-0.1.43-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:4b7cd2bd2152d623cb23bfc368b5580bc02acb46fc9d80d24868c026fb22b9ac"},
+    {file = "claude_agent_sdk-0.1.43-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:0a471da0ec027e26aa1d3ff16e8649df2b05a9886db83f19e6c6e121dd9b587d"},
+    {file = "claude_agent_sdk-0.1.43-py3-none-win_amd64.whl", hash = "sha256:2277b466b5b6a7a9c4ac014d9e44e2fec65f72ed8c7a22a4645233686c3950c0"},
+    {file = "claude_agent_sdk-0.1.43.tar.gz", hash = "sha256:611bbb8bf923455bba5e8bd1cc00f3ea382b6673fa62e73f88bdb7ef0def9222"},
 ]
 
 [package.dependencies]
@@ -2784,4 +2784,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "11056f1859fc09b1397ce963ce0e2fc41cfdd59886de260ba46c935b7e433619"
+content-hash = "0b2f6f878e0cee8ca119d5ec0590dd69d8ed1dfa3342349f9f2ca4c11b9bfc94"
