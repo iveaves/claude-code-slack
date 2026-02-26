@@ -463,6 +463,47 @@ class MessageOrchestrator:
 
         return _handle_scheduler
 
+    def _make_reaction_callback(
+        self, channel: str, message_ts: str, client: AsyncWebClient
+    ) -> Callable:
+        """Create a callback that adds/removes emoji reactions on the user's message."""
+
+        async def _react(tool_input: Dict[str, Any]) -> str:
+            emoji_name = tool_input.get("emoji_name", "")
+            remove = tool_input.get("remove", False)
+
+            if not emoji_name:
+                return "Error: emoji_name is required."
+
+            # Strip colons if provided (e.g. ":thumbsup:" → "thumbsup")
+            emoji_name = emoji_name.strip(":")
+
+            try:
+                if remove:
+                    await client.reactions_remove(
+                        name=emoji_name, channel=channel, timestamp=message_ts
+                    )
+                    return f"Removed :{emoji_name}: reaction."
+                else:
+                    await client.reactions_add(
+                        name=emoji_name, channel=channel, timestamp=message_ts
+                    )
+                    return f"Added :{emoji_name}: reaction."
+            except Exception as e:
+                error_str = str(e)
+                if "already_reacted" in error_str:
+                    return f"Already reacted with :{emoji_name}:."
+                if "no_reaction" in error_str:
+                    return f"No :{emoji_name}: reaction to remove."
+                logger.warning(
+                    "SlackReaction failed",
+                    emoji=emoji_name,
+                    error=error_str,
+                )
+                return f"Error: {error_str}"
+
+        return _react
+
     def _make_file_upload_callback(
         self, channel: str, user_id: str, client: AsyncWebClient
     ) -> Callable:
@@ -1509,6 +1550,11 @@ class MessageOrchestrator:
                 channel, user_id, working_directory=current_dir
             )
             file_upload_cb = self._make_file_upload_callback(channel, user_id, client)
+            # React to the user's original message (not the progress msg)
+            user_message_ts = event.get("ts", "")
+            reaction_cb = self._make_reaction_callback(
+                channel, user_message_ts, client
+            )
 
             claude_response = await claude_integration.run_command(
                 prompt=message_text,
@@ -1520,6 +1566,7 @@ class MessageOrchestrator:
                 ask_user_callback=ask_user_cb,
                 scheduler_callback=scheduler_cb,
                 file_upload_callback=file_upload_cb,
+                reaction_callback=reaction_cb,
             )
 
             # New session created successfully -- clear the one-shot flag

@@ -1,7 +1,7 @@
 """In-process MCP tools for the Slack bot.
 
-Registers SlackFileUpload, ScheduleJob, ListScheduledJobs, and
-RemoveScheduledJob as real SDK MCP tools so Claude discovers them
+Registers SlackFileUpload, SlackReaction, ScheduleJob, ListScheduledJobs,
+and RemoveScheduledJob as real SDK MCP tools so Claude discovers them
 natively (no system-prompt hacking or permission-deny interception).
 """
 
@@ -13,12 +13,14 @@ from claude_agent_sdk import McpSdkServerConfig, SdkMcpTool, create_sdk_mcp_serv
 def create_bot_mcp_server(
     file_upload_fn: Optional[Callable] = None,
     scheduler_fn: Optional[Callable] = None,
+    reaction_fn: Optional[Callable] = None,
 ) -> McpSdkServerConfig:
     """Build an in-process MCP server with the bot's custom tools.
 
     Args:
         file_upload_fn: async (tool_input: dict) -> str
         scheduler_fn:   async (tool_name: str, tool_input: dict) -> str
+        reaction_fn:    async (tool_input: dict) -> str
     """
     tools: list[SdkMcpTool[Any]] = []
 
@@ -61,6 +63,42 @@ def create_bot_mcp_server(
             }
 
         tools.append(slack_file_upload)
+
+    # ── SlackReaction ─────────────────────────────────────────────────
+    if reaction_fn:
+
+        @tool(
+            "SlackReaction",
+            "React to the user's Slack message with an emoji — like a human "
+            "coworker would. Use sparingly and naturally: to acknowledge a "
+            "request, celebrate, or show empathy. Don't react to every message.",
+            {
+                "type": "object",
+                "properties": {
+                    "emoji_name": {
+                        "type": "string",
+                        "description": (
+                            "Emoji name without colons (e.g. 'thumbsup', 'eyes', "
+                            "'tada', 'fire', 'heart', 'thinking_face', 'white_check_mark')"
+                        ),
+                    },
+                    "remove": {
+                        "type": "boolean",
+                        "description": "Set true to remove a reaction instead of adding",
+                    },
+                },
+                "required": ["emoji_name"],
+            },
+        )
+        async def slack_reaction(args: Dict[str, Any]) -> Dict[str, Any]:
+            result = await reaction_fn(args)
+            is_error = result.startswith("Error")
+            return {
+                "content": [{"type": "text", "text": result}],
+                "is_error": is_error,
+            }
+
+        tools.append(slack_reaction)
 
     # ── Scheduler tools ──────────────────────────────────────────────
     if scheduler_fn:

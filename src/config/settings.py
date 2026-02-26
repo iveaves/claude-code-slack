@@ -131,6 +131,7 @@ class Settings(BaseSettings):
             "ListScheduledJobs",
             "RemoveScheduledJob",
             "SlackFileUpload",
+            "SlackReaction",
         ],
         description="List of allowed Claude tools",
     )

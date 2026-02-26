@@ -189,6 +189,7 @@ class ClaudeSDKManager:
         ask_user_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
         scheduler_callback: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         file_upload_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        reaction_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -292,10 +293,11 @@ class ClaudeSDKManager:
                 )
 
             # Add bot tools MCP server (only if there are callbacks to wire up)
-            if file_upload_callback or scheduler_callback:
+            if file_upload_callback or scheduler_callback or reaction_callback:
                 bot_server = create_bot_mcp_server(
                     file_upload_fn=file_upload_callback,
                     scheduler_fn=scheduler_callback,
+                    reaction_fn=reaction_callback,
                 )
                 mcp_servers["slack-bot-tools"] = bot_server
 
@@ -651,7 +653,12 @@ class ClaudeSDKManager:
             "(NOT ~/.claude/). "
             "This is your only writable .claude directory.\n\n"
             "To send files or images to the user, use the SlackFileUpload tool. "
-            "To schedule recurring tasks, use the ScheduleJob tool."
+            "To schedule recurring tasks, use the ScheduleJob tool.\n\n"
+            "You can react to the user's message with an emoji using the "
+            "SlackReaction tool — use it like a human coworker would. "
+            "Don't react to every message. Good times to react: acknowledging "
+            "a request (thumbsup, eyes), celebrating a win (tada, fire), "
+            "or expressing empathy. Keep it natural and sparing."
         )
 
     def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:

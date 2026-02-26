@@ -51,6 +51,7 @@ class ClaudeIntegration:
         ask_user_callback: Optional[Callable] = None,
         scheduler_callback: Optional[Callable] = None,
         file_upload_callback: Optional[Callable] = None,
+        reaction_callback: Optional[Callable] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -99,6 +100,7 @@ class ClaudeIntegration:
                 "ListScheduledJobs",
                 "RemoveScheduledJob",
                 "SlackFileUpload",
+                "SlackReaction",
             }
 
             # Validate tool calls
@@ -176,6 +178,7 @@ class ClaudeIntegration:
                     ask_user_callback=ask_user_callback,
                     scheduler_callback=scheduler_callback,
                     file_upload_callback=file_upload_callback,
+                    reaction_callback=reaction_callback,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired on Claude's side),
@@ -202,6 +205,7 @@ class ClaudeIntegration:
                         stream_callback=stream_handler,
                         ask_user_callback=ask_user_callback,
                         file_upload_callback=file_upload_callback,
+                        reaction_callback=reaction_callback,
                     )
                 else:
                     raise
@@ -286,6 +290,7 @@ class ClaudeIntegration:
         ask_user_callback: Optional[Callable] = None,
         scheduler_callback: Optional[Callable] = None,
         file_upload_callback: Optional[Callable] = None,
+        reaction_callback: Optional[Callable] = None,
     ) -> ClaudeResponse:
         """Execute command via the configured backend (SDK or CLI)."""
         if self.sdk_manager:
@@ -298,6 +303,7 @@ class ClaudeIntegration:
                 ask_user_callback=ask_user_callback,
                 scheduler_callback=scheduler_callback,
                 file_upload_callback=file_upload_callback,
+                reaction_callback=reaction_callback,
             )
         elif self.process_manager:
             return await self.process_manager.execute_command(
