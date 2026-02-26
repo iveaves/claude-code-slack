@@ -134,6 +134,11 @@ Example: `.claude/tasks/support_all_filetypes/plan.md`
   poetry run pytest tests/
   ```
 - The bot runs via `bin/run.sh` which auto-restarts on exit. To deploy changes: `kill $(cat data/bot.pid)` and the wrapper brings it back up in 3 seconds.
+- **Restarting the bot as the Slack agent**: The sandbox blocks `kill`, so instead use:
+  ```bash
+  touch /Users/isaac-mini/Projects/claude-code-slack/claude-code-slack/data/restart_requested
+  ```
+  The bot watches for this file and will restart itself automatically.
 
 ## Code Style
 

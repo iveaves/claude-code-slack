@@ -318,6 +318,19 @@ async def run_application(app: Dict[str, Any]) -> None:
             bot.deps["scheduler"] = scheduler
             logger.info("Job scheduler enabled")
 
+        # Restart sentinel watcher (allows restart via `touch data/restart_requested`)
+        async def _watch_restart_sentinel() -> None:
+            while not shutdown_event.is_set():
+                if RESTART_SENTINEL.exists():
+                    logger.info("Restart sentinel detected, shutting down for restart")
+                    RESTART_SENTINEL.unlink(missing_ok=True)
+                    shutdown_event.set()
+                    return
+                await asyncio.sleep(2)
+
+        sentinel_task = asyncio.create_task(_watch_restart_sentinel())
+        tasks.append(sentinel_task)
+
         # Shutdown task
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         tasks.append(shutdown_task)
@@ -366,6 +379,7 @@ async def run_application(app: Dict[str, Any]) -> None:
 
 
 PIDFILE = Path("data/bot.pid")
+RESTART_SENTINEL = Path("data/restart_requested")
 
 
 def _acquire_pidfile() -> None:
