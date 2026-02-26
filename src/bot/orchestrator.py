@@ -18,7 +18,6 @@ from slack_sdk.web.async_client import AsyncWebClient
 from ..claude.exceptions import ClaudeToolValidationError
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
-from ..projects import PrivateTopicsUnavailableError
 from .utils.slack_format import escape_mrkdwn
 
 logger = structlog.get_logger()
@@ -1036,11 +1035,6 @@ class MessageOrchestrator:
         """
         # Resolve channel to project/working directory
         user_state = self._get_user_state(user_id)
-        context: Dict[str, Any] = {
-            "user_state": user_state,
-            "deps": self.deps,
-            "settings": self.settings,
-        }
 
         manager = self.deps.get("project_channels_manager")
         if manager:
@@ -1497,7 +1491,7 @@ class MessageOrchestrator:
         _say = say
         if thread_ts:
 
-            async def _say(text="", **kw):
+            async def _say(text="", **kw):  # noqa: F811
                 return await say(text=text, thread_ts=thread_ts, **kw)
 
         # Rate limit check
@@ -1949,7 +1943,6 @@ class MessageOrchestrator:
             return
 
         lines: List[str] = []
-        button_elements: List[Dict[str, Any]] = []
         current_name = current_dir.name if current_dir != base else None
 
         for d in entries:

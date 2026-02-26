@@ -8,8 +8,7 @@ Features:
 - Graceful shutdown
 """
 
-import asyncio
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import structlog
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler

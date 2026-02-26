@@ -27,7 +27,7 @@ from src.events.handlers import AgentHandler
 from src.events.middleware import EventSecurityMiddleware
 from src.exceptions import ConfigurationError
 from src.notifications.service import NotificationService
-from src.projects import ProjectChannelManager, load_project_registry
+from src.projects import load_project_registry
 from src.scheduler.scheduler import JobScheduler
 from src.security.audit import AuditLogger, InMemoryAuditStorage
 from src.security.auth import (
@@ -384,7 +384,7 @@ def _acquire_pidfile() -> None:
                 import time
 
                 time.sleep(2)  # give it time to shut down
-            except ProcessNotFoundError:
+            except ProcessLookupError:
                 pass  # already dead
             except PermissionError:
                 pass  # different user's process, skip

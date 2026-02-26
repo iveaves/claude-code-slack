@@ -1,14 +1,11 @@
 """Handle Slack Block Kit action callbacks."""
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import structlog
 
-from ...claude.facade import ClaudeIntegration
 from ...config.settings import Settings
-from ...security.audit import AuditLogger
-from ...security.validators import SecurityValidator
 from ..utils.slack_format import escape_mrkdwn
 
 logger = structlog.get_logger()
@@ -142,7 +139,7 @@ async def handle_cd_action(
         existing = await claude_integration._find_resumable_session(user_id, new_path)
         if existing:
             user_state["claude_session_id"] = existing.session_id
-            session_info = f" · session resumed"
+            session_info = " · session resumed"
         else:
             user_state["claude_session_id"] = None
 
