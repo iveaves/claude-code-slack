@@ -126,11 +126,12 @@ Example: `.claude/tasks/support_all_filetypes/plan.md`
 ## Git & Deploy Workflow
 
 - **Never push to `main` until the user has confirmed the change works.** Commit locally, restart the bot, and let the user verify in Slack first. Only push after explicit user approval. This applies to both bug fixes and new features.
-- **Always run `make format` then `make lint` before committing.** `make format` auto-fixes (Black + isort). `make lint` checks everything (Black, isort, flake8, mypy). All three must pass with zero errors before pushing:
+- **Always run `make format`, `make lint`, and `make test` before committing.** `make format` auto-fixes (Black + isort). `make lint` checks everything (Black, isort, flake8, mypy). `make test` runs the full pytest suite. All must pass with zero errors before pushing:
   ```bash
   poetry run black --check src tests
   poetry run isort --check-only src tests
   poetry run flake8 src tests
+  poetry run pytest tests/
   ```
 - The bot runs via `bin/run.sh` which auto-restarts on exit. To deploy changes: `kill $(cat data/bot.pid)` and the wrapper brings it back up in 3 seconds.
 
