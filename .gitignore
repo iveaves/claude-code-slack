@@ -103,6 +103,7 @@ celerybeat.pid
 
 # Environments
 .env
+config/emoji.yaml
 .venv
 env/
 venv/

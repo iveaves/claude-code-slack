@@ -1119,9 +1119,7 @@ class MessageOrchestrator:
                     session_id=claude_response.session_id,
                     num_turns=claude_response.num_turns,
                 )
-                response_text = (
-                    "_Scheduled job completed but returned no text output._"
-                )
+                response_text = "_Scheduled job completed but returned no text output._"
 
             formatter = ResponseFormatter(self.settings)
             formatted_messages = formatter.format_claude_response(response_text)
@@ -1552,9 +1550,7 @@ class MessageOrchestrator:
             file_upload_cb = self._make_file_upload_callback(channel, user_id, client)
             # React to the user's original message (not the progress msg)
             user_message_ts = event.get("ts", "")
-            reaction_cb = self._make_reaction_callback(
-                channel, user_message_ts, client
-            )
+            reaction_cb = self._make_reaction_callback(channel, user_message_ts, client)
 
             claude_response = await claude_integration.run_command(
                 prompt=message_text,
@@ -1608,7 +1604,9 @@ class MessageOrchestrator:
                     num_turns=claude_response.num_turns,
                     cost=claude_response.cost,
                 )
-                response_text = "_Claude completed the request but returned no text output._"
+                response_text = (
+                    "_Claude completed the request but returned no text output._"
+                )
 
             formatter = ResponseFormatter(self.settings)
             formatted_messages = formatter.format_claude_response(response_text)

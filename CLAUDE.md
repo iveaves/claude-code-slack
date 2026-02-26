@@ -126,6 +126,7 @@ Example: `.claude/tasks/support_all_filetypes/plan.md`
 ## Git & Deploy Workflow
 
 - **Never push to `main` until the user has confirmed the change works.** Commit locally, restart the bot, and let the user verify in Slack first. Only push after explicit user approval. This applies to both bug fixes and new features.
+- **Always run `make format` before committing** to avoid lint failures (runs Black + isort).
 - The bot runs via `bin/run.sh` which auto-restarts on exit. To deploy changes: `kill $(cat data/bot.pid)` and the wrapper brings it back up in 3 seconds.
 
 ## Code Style

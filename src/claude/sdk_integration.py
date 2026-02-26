@@ -642,7 +642,7 @@ class ClaudeSDKManager:
 
     def _build_system_prompt(self, working_directory: Path) -> str:
         """Build system prompt with context about the bot environment."""
-        return (
+        prompt = (
             f"All file operations must stay within {working_directory}. "
             "Use relative paths.\n\n"
             "IMPORTANT: You are running as a Slack bot agent. "
@@ -660,6 +660,43 @@ class ClaudeSDKManager:
             "a request (thumbsup, eyes), celebrating a win (tada, fire), "
             "or expressing empathy. Keep it natural and sparing."
         )
+
+        # Append custom emoji context if config exists
+        emoji_context = self._load_emoji_config(working_directory)
+        if emoji_context:
+            prompt += "\n\n" + emoji_context
+
+        return prompt
+
+    def _load_emoji_config(self, working_directory: Path) -> str:
+        """Load custom emoji definitions from config/emoji.yaml."""
+        import yaml
+
+        # Check relative to working directory first, then CWD
+        for base in [working_directory, Path(".")]:
+            path = base / "config" / "emoji.yaml"
+            if path.exists():
+                try:
+                    with open(path) as f:
+                        data = yaml.safe_load(f)
+                    emojis = data.get("emojis") if data else None
+                    if not emojis:
+                        return ""
+                    lines = [
+                        "Custom workspace emojis — PREFER these over "
+                        "standard emojis when the situation matches:"
+                    ]
+                    for e in emojis:
+                        name = e.get("name", "")
+                        when = e.get("when", "")
+                        if name:
+                            lines.append(
+                                f"  :{name}: — {when}" if when else f"  :{name}:"
+                            )
+                    return "\n".join(lines)
+                except Exception:
+                    logger.debug("Failed to load emoji config", path=str(path))
+        return ""
 
     def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:
         """Load MCP server configuration from a JSON file.

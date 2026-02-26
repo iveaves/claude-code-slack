@@ -1,0 +1,24 @@
+# Custom Slack emoji definitions and usage guidance.
+# These are injected into Claude's system prompt so it knows
+# which emojis are available and when to use them.
+#
+# Standard Slack emojis (thumbsup, heart, fire, etc.) are always
+# available — only list custom workspace emojis or specific guidance here.
+#
+# Format:
+#   emojis:
+#     - name: emoji-name        # without colons
+#       when: "When to use it"  # natural language guidance
+
+# Example:
+  # emojis:
+  #   - name: let_me_cook
+  #     when: "When about to work on a big-ish task"
+  #   - name: kirby-ez
+  #     when: "When assigned to something small or easy, or when your thanked"
+  #   - name: this-is-fine-fire
+  #     when: "When things are going wrong but we're powering through"
+  #   - name: sad-cowboy
+  #     when: "When you did something wrong/feel bad about something"
+  #   - name: smiling_face_with_tear
+  #     when: "When smiling face with single tear would be appropriate"
