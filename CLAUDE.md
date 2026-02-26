@@ -123,6 +123,12 @@ For non-trivial tasks, create a sub-directory under `.claude/tasks/` named after
 
 Example: `.claude/tasks/support_all_filetypes/plan.md`
 
+## Git & Deploy Workflow
+
+- **Bug fixes** can be committed and pushed to `main` directly.
+- **New features** must be tested by the user before pushing to `main`. Commit locally, restart the bot, and let the user verify it works in Slack first. Only push after explicit user approval.
+- The bot runs via `bin/run.sh` which auto-restarts on exit. To deploy changes: `kill $(cat data/bot.pid)` and the wrapper brings it back up in 3 seconds.
+
 ## Code Style
 
 - Black (88 char line length), isort (black profile), flake8, mypy strict, autoflake for unused imports
