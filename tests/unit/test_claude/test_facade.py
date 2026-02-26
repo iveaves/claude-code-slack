@@ -38,8 +38,9 @@ def _make_user_data(force_new: bool = False) -> Dict[str, Any]:
 def config(tmp_path):
     """Create test config."""
     return Settings(
-        telegram_bot_token="test:token",
-        telegram_bot_username="testbot",
+        _env_file=None,
+        slack_bot_token="xoxb-test-token",
+        slack_app_token="xapp-test-token",
         approved_directory=tmp_path,
         session_timeout_hours=24,
         max_sessions_per_user=5,

@@ -249,8 +249,9 @@ class TestClaudeSDKManager:
         )
 
         config = Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,
             enable_mcp=True,
@@ -420,8 +421,9 @@ class TestClaudeSandboxSettings:
     async def test_disallowed_tools_passed_to_options(self, tmp_path):
         """Test that disallowed_tools from config are passed to ClaudeAgentOptions."""
         config = Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,
             claude_disallowed_tools=["WebFetch", "WebSearch"],
@@ -449,8 +451,9 @@ class TestClaudeSandboxSettings:
     async def test_sandbox_disabled_when_config_false(self, tmp_path):
         """Test sandbox is disabled when sandbox_enabled=False."""
         config = Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
+            _env_file=None,
+            slack_bot_token="xoxb-test-token",
+            slack_app_token="xapp-test-token",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,
             sandbox_enabled=False,
