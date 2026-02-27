@@ -102,6 +102,17 @@ class MessageOrchestrator:
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
         self.deps = deps
+        # Per-channel locks to prevent duplicate Claude processes when a user
+        # sends a second message while the first is still being processed.
+        self._channel_locks: Dict[str, asyncio.Lock] = {}
+        # Track the active Claude task per channel so /stop can cancel it.
+        self._active_tasks: Dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
+
+    def _get_channel_lock(self, channel: str) -> asyncio.Lock:
+        """Get or create a per-channel lock for concurrency control."""
+        if channel not in self._channel_locks:
+            self._channel_locks[channel] = asyncio.Lock()
+        return self._channel_locks[channel]
 
     def _get_user_state(self, user_id: str) -> Dict[str, Any]:
         """Get or create per-user state dict (replaces context.user_data)."""
@@ -285,6 +296,7 @@ class MessageOrchestrator:
         app.command("/stat")(self._inject_deps(self.agentic_status))
         app.command("/verbose")(self._inject_deps(self.agentic_verbose))
         app.command("/repo")(self._inject_deps(self.agentic_repo))
+        app.command("/stop")(self._inject_deps(self.agentic_stop))
 
         if self.settings.enable_project_channels:
             app.command("/sync_channels")(self._inject_deps(self.agentic_sync_channels))
@@ -807,6 +819,27 @@ class MessageOrchestrator:
         user_state["force_new_session"] = True
 
         await say("Session reset. What's next?")
+
+    async def agentic_stop(
+        self,
+        ack: Callable,
+        say: Callable,
+        command: Dict[str, Any],
+        context: Dict[str, Any],
+        **kwargs: Any,
+    ) -> None:
+        """Interrupt the currently running Claude command in this channel."""
+        await ack()
+        channel = command.get("channel_id", "")
+
+        task = self._active_tasks.get(channel)
+        if task and not task.done():
+            task.cancel()
+            await say(
+                ":octagonal_sign: Interrupted. The current request has been stopped."
+            )
+        else:
+            await say("Nothing running right now.")
 
     async def agentic_status(
         self,
@@ -1502,6 +1535,19 @@ class MessageOrchestrator:
                 await _say(f":hourglass: {limit_message}")
                 return
 
+        # Prevent duplicate Claude processes: if this channel already has a
+        # command running, queue the message instead of spawning a second one.
+        channel_lock = self._get_channel_lock(channel)
+        if channel_lock.locked():
+            await _say(
+                ":hourglass: Still working on the previous request. "
+                "I'll get to this once it's done. "
+                "(use `/stop` to interrupt)"
+            )
+            # Wait for the lock, then fall through to process this message
+            await channel_lock.acquire()
+            channel_lock.release()
+
         verbose_level = self._get_verbose_level(user_state)
 
         # Post initial progress message
@@ -1535,6 +1581,7 @@ class MessageOrchestrator:
         )
 
         success = True
+        await channel_lock.acquire()
         try:
             # Create interactive callbacks for Slack
             ask_user_cb = self._make_ask_user_callback(channel, user_id, client)
@@ -1546,7 +1593,8 @@ class MessageOrchestrator:
             user_message_ts = event.get("ts", "")
             reaction_cb = self._make_reaction_callback(channel, user_message_ts, client)
 
-            claude_response = await claude_integration.run_command(
+            # Wrap in a task so /stop can cancel it
+            run_coro = claude_integration.run_command(
                 prompt=message_text,
                 working_directory=current_dir,
                 user_id=user_id,
@@ -1558,6 +1606,12 @@ class MessageOrchestrator:
                 file_upload_callback=file_upload_cb,
                 reaction_callback=reaction_cb,
             )
+            run_task = asyncio.current_task()
+            self._active_tasks[channel] = run_task  # type: ignore[assignment]
+            try:
+                claude_response = await run_coro
+            finally:
+                self._active_tasks.pop(channel, None)
 
             # New session created successfully -- clear the one-shot flag
             if force_new:
@@ -1605,6 +1659,15 @@ class MessageOrchestrator:
             formatter = ResponseFormatter(self.settings)
             formatted_messages = formatter.format_claude_response(response_text)
 
+        except asyncio.CancelledError:
+            success = False
+            logger.info("Claude command interrupted by /stop", user_id=user_id)
+            from .utils.formatting import FormattedMessage
+
+            formatted_messages = [
+                FormattedMessage(":octagonal_sign: _Request interrupted._")
+            ]
+
         except ClaudeToolValidationError as e:
             success = False
             logger.error("Tool validation error", error=str(e), user_id=user_id)
@@ -1619,6 +1682,10 @@ class MessageOrchestrator:
             from .utils.formatting import FormattedMessage
 
             formatted_messages = [FormattedMessage(_format_error_message(str(e)))]
+
+        finally:
+            # Release channel lock so queued messages can proceed
+            channel_lock.release()
 
         # Delete the progress message
         try:
