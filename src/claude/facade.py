@@ -433,7 +433,39 @@ class ClaudeIntegration:
         if self.process_manager:
             await self.process_manager.kill_all_processes()
 
+        # Kill any orphaned Claude CLI child processes (SDK path spawns
+        # subprocesses that may survive if a task is cancelled mid-run).
+        self._kill_child_claude_processes()
+
         logger.info("Claude integration shutdown complete")
+
+    @staticmethod
+    def _kill_child_claude_processes() -> None:
+        """Kill any claude CLI subprocesses spawned by this bot."""
+        import os
+        import signal
+
+        my_pid = os.getpid()
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["pgrep", "-P", str(my_pid), "-f", "claude"],
+                capture_output=True,
+                text=True,
+            )
+            for line in result.stdout.strip().splitlines():
+                try:
+                    child_pid = int(line.strip())
+                    os.kill(child_pid, signal.SIGTERM)
+                    logger.info(
+                        "Killed child Claude process",
+                        child_pid=child_pid,
+                    )
+                except (ValueError, ProcessLookupError, PermissionError):
+                    pass
+        except Exception as e:
+            logger.debug("Child process cleanup skipped", error=str(e))
 
     def _get_admin_instructions(self, blocked_tools: List[str]) -> str:
         """Generate admin instructions for enabling blocked tools."""

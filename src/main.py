@@ -352,10 +352,13 @@ async def run_application(app: Dict[str, Any]) -> None:
 
         for task in pending:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        # Give pending tasks 5 seconds to finish, then move on
+        if pending:
+            _, still_pending = await asyncio.wait(pending, timeout=5)
+            for task in still_pending:
+                logger.warning(
+                    "Task did not finish during shutdown", task=task.get_name()
+                )
 
     except Exception as e:
         logger.error("Application error", error=str(e))
@@ -453,12 +456,25 @@ async def main() -> None:
 
 def run() -> None:
     """Synchronous entry point for setuptools."""
+    import threading
+
+    # Hard kill if shutdown hangs for more than 15 seconds
+    def _force_exit() -> None:
+        print("[WATCHDOG] Shutdown timed out after 15s, force-exiting")
+        _release_pidfile()
+        os._exit(1)
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nShutdown requested by user")
     finally:
         _release_pidfile()
+
+    # Start watchdog in case sys.exit hangs on thread cleanup
+    watchdog = threading.Timer(15.0, _force_exit)
+    watchdog.daemon = True
+    watchdog.start()
     sys.exit(0)
 
 

@@ -114,6 +114,14 @@ class MessageOrchestrator:
             self._channel_locks[channel] = asyncio.Lock()
         return self._channel_locks[channel]
 
+    def _cancel_active_task(self, channel: str) -> bool:
+        """Cancel the active Claude task for a channel. Returns True if a task was cancelled."""
+        task = self._active_tasks.get(channel)
+        if task and not task.done():
+            task.cancel()
+            return True
+        return False
+
     def _get_user_state(self, user_id: str) -> Dict[str, Any]:
         """Get or create per-user state dict (replaces context.user_data)."""
         user_states: Dict[str, Dict[str, Any]] = self.deps.setdefault(
@@ -811,12 +819,16 @@ class MessageOrchestrator:
         context: Dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        """Reset session, one-line confirmation."""
+        """Reset session, one-line confirmation. Also cancels any running task."""
         await ack()
         user_state = context.get("user_state", {})
         user_state["claude_session_id"] = None
         user_state["session_started"] = True
         user_state["force_new_session"] = True
+
+        # Cancel any running Claude task in this channel
+        channel = command.get("channel_id", "")
+        self._cancel_active_task(channel)
 
         await say("Session reset. What's next?")
 
@@ -832,9 +844,14 @@ class MessageOrchestrator:
         await ack()
         channel = command.get("channel_id", "")
 
-        task = self._active_tasks.get(channel)
-        if task and not task.done():
-            task.cancel()
+        if self._cancel_active_task(channel):
+            # Also release the channel lock if held, so the channel isn't stuck
+            lock = self._channel_locks.get(channel)
+            if lock and lock.locked():
+                try:
+                    lock.release()
+                except RuntimeError:
+                    pass  # not locked by us
             await say(
                 ":octagonal_sign: Interrupted. The current request has been stopped."
             )
@@ -1001,16 +1018,18 @@ class MessageOrchestrator:
         progress_ts: str,
         tool_log: List[Dict[str, Any]],
         start_time: float,
+        debug_log: Optional[Callable[[str, str], None]] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
-        Returns None when verbose_level is 0 (nothing to display).
+        Returns None when verbose_level is 0 and no debug_log.
         Updates the Slack progress message via chat_update.
         """
-        if verbose_level == 0:
+        if verbose_level == 0 and not debug_log:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
+        _dlog = debug_log or (lambda kind, detail: None)
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
             # Capture tool calls
@@ -1019,10 +1038,12 @@ class MessageOrchestrator:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
                     tool_log.append({"kind": "tool", "name": name, "detail": detail})
+                    _dlog("TOOL", f"{name}: {detail[:200]}")
 
             # Capture thinking (shown with thought bubble emoji)
             if update_obj.type == "thinking" and update_obj.content:
                 text = update_obj.content.strip()
+                _dlog("THINK", text[:300])
                 if text and verbose_level >= 1:
                     first_line = text.split("\n", 1)[0].strip()
                     if first_line:
@@ -1033,6 +1054,7 @@ class MessageOrchestrator:
             # Capture assistant text (reasoning / commentary)
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
+                _dlog("ASST", text[:300])
                 if text and verbose_level >= 1:
                     first_line = text.split("\n", 1)[0].strip()
                     if first_line:
@@ -1420,8 +1442,9 @@ class MessageOrchestrator:
         """Check if this channel requires a mention to respond.
 
         Returns the cleaned message (trigger stripped) if bot should respond,
-        or None if the message should be ignored. "Pan" can appear anywhere
-        in the message, not just at the start.
+        or None if the message should be ignored. The bot name (e.g. "Pan")
+        can appear anywhere in the message, not just at the start. @mention
+        checks are scoped to the bot's own user ID only.
         """
         chan_ctx = context.get("_channel_context", {})
         if not chan_ctx.get("require_mention"):
@@ -1444,9 +1467,10 @@ class MessageOrchestrator:
             cleaned = (stripped[:start] + stripped[end:]).strip(" ,:;-")
             return cleaned or message_text
 
-        # Check for Slack @mention (<@U...>) anywhere
-        if re.search(r"<@U[A-Z0-9]+>", stripped):
-            remainder = re.sub(r"<@U[A-Z0-9]+>\s*", "", stripped).strip()
+        # Check for Slack @mention of the bot specifically
+        bot_user_id = context.get("bot_user_id", "")
+        if bot_user_id and re.search(rf"<@{re.escape(bot_user_id)}>", stripped):
+            remainder = re.sub(rf"<@{re.escape(bot_user_id)}>\s*", "", stripped).strip()
             return remainder or message_text
 
         return None  # ignore this message
@@ -1573,11 +1597,33 @@ class MessageOrchestrator:
         # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(user_state.get("force_new_session"))
 
-        # --- Verbose progress tracking via stream callback ---
+        # --- Debug log + verbose progress tracking ---
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
+
+        from pathlib import Path
+
+        _dbg_dir = Path("data/debug_logs")
+        _dbg_dir.mkdir(parents=True, exist_ok=True)
+        _dbg_file = _dbg_dir / f"{channel}_{int(start_time)}.log"
+        _dbg_fh = open(_dbg_file, "a")
+
+        def _debug_log(kind: str, detail: str) -> None:
+            if not _dbg_fh.closed:
+                elapsed = time.time() - start_time
+                _dbg_fh.write(f"[{elapsed:7.1f}s] [{kind:8s}] {detail}\n")
+                _dbg_fh.flush()
+
+        _debug_log("START", f"channel={channel} verbose={verbose_level}")
+
         on_stream = self._make_stream_callback(
-            verbose_level, client, progress_channel, progress_ts, tool_log, start_time
+            verbose_level,
+            client,
+            progress_channel,
+            progress_ts,
+            tool_log,
+            start_time,
+            _debug_log,
         )
 
         success = True
@@ -1685,7 +1731,16 @@ class MessageOrchestrator:
 
         finally:
             # Release channel lock so queued messages can proceed
-            channel_lock.release()
+            if channel_lock.locked():
+                channel_lock.release()
+            # Close debug log
+            try:
+                elapsed = time.time() - start_time
+                status_str = "OK" if success else "FAILED"
+                _debug_log("END", f"{status_str} after {elapsed:.0f}s")
+                _dbg_fh.close()
+            except Exception:
+                pass
 
         # Delete the progress message
         try:
