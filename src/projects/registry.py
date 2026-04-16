@@ -18,6 +18,7 @@ class ProjectDefinition:
     channel_id: Optional[str] = None
     enabled: bool = True
     require_mention: bool = False
+    reply_in_thread: bool = False
 
 
 class ProjectRegistry:
@@ -83,6 +84,7 @@ def load_project_registry(
             channel_id = str(channel_id).strip() or None
         enabled = bool(raw.get("enabled", True))
         require_mention = bool(raw.get("require_mention", False))
+        reply_in_thread = bool(raw.get("reply_in_thread", False))
 
         if not slug:
             raise ValueError(f"Project entry at index {idx} is missing 'slug'")
@@ -132,6 +134,7 @@ def load_project_registry(
                 channel_id=channel_id,
                 enabled=enabled,
                 require_mention=require_mention,
+                reply_in_thread=reply_in_thread,
             )
         )
 
