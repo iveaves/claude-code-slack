@@ -563,14 +563,20 @@ class ClaudeSDKManager:
                         tool_calls=tool_calls if tool_calls else None,
                     )
                     await stream_callback(update)
-                elif content:
-                    # Fallback for non-list content
+                elif content and not isinstance(content, list):
+                    # Fallback only for non-list content. If content is a list,
+                    # the loop above already emitted clean thinking/text/tool
+                    # updates -- falling through here would re-stringify the
+                    # raw block reprs (including ThinkingBlock's signature=...
+                    # field on Opus 4.7+ interleaved thinking) into the log.
                     content_str = str(content)
-                    # Clean ThinkingBlock wrapper if present
+                    # Strip ThinkingBlock wrapper if the SDK ever hands us one
+                    # as a bare string; tolerate optional signature= suffix.
                     import re as _re
 
                     content_str = _re.sub(
-                        r"\[?ThinkingBlock\(thinking=['\"]?(.*?)['\"]?\)\]?",
+                        r"\[?ThinkingBlock\(thinking=['\"]?(.*?)['\"]?"
+                        r"(?:,\s*signature=['\"][^'\"]*['\"])?\)\]?",
                         r"\1",
                         content_str,
                     ).strip()
