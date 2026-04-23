@@ -339,6 +339,7 @@ class MessageOrchestrator:
             "project_root": str(project_root),
             "project_name": project.name,
             "require_mention": project.require_mention,
+            "reply_in_thread": project.reply_in_thread,
         }
         return True
 
@@ -1607,6 +1608,15 @@ class MessageOrchestrator:
         message_text = event.get("text", "")
         channel = event.get("channel", "")
         thread_ts = event.get("thread_ts")
+        # reply_thread_ts is what we pass to say(): if the message is already
+        # in a thread, reply in that thread; if the channel is configured with
+        # reply_in_thread and this is a top-level message, start a thread rooted
+        # at the incoming message.
+        reply_thread_ts = thread_ts
+        if reply_thread_ts is None:
+            chan_ctx = context.get("_channel_context", {})
+            if chan_ctx.get("reply_in_thread"):
+                reply_thread_ts = event.get("ts")
 
         # For file_share events, text may be empty — that's OK if there are files
         files = event.get("files", [])
@@ -1658,10 +1668,10 @@ class MessageOrchestrator:
 
         # Wrap say() to reply in the same thread when applicable
         _say = say
-        if thread_ts:
+        if reply_thread_ts:
 
             async def _say(text="", **kw):  # noqa: F811
-                return await say(text=text, thread_ts=thread_ts, **kw)
+                return await say(text=text, thread_ts=reply_thread_ts, **kw)
 
         # Rate limit check
         rate_limiter = self.deps.get("rate_limiter")
