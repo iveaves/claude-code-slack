@@ -8,6 +8,7 @@ In classic mode, delegates to existing full-featured handlers.
 import asyncio
 import re
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -99,6 +100,15 @@ def _tool_icon(name: str) -> str:
 class MessageOrchestrator:
     """Routes messages based on mode. Single entry point for all Slack updates."""
 
+    # Slack Socket Mode delivers events at-least-once: if an envelope ack is
+    # late (e.g. slow handler turn), Slack re-sends the same event. Without
+    # dedup, every retry re-enters the channel-lock queue and produces a
+    # duplicate reply once the original finishes. TTL covers Slack's retry
+    # window (~60s between attempts) plus generous slack for long Claude
+    # turns on Opus 4.7.
+    _RECENT_EVENT_CACHE_TTL = 300.0
+    _RECENT_EVENT_CACHE_MAX = 2000
+
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
         self.deps = deps
@@ -107,12 +117,58 @@ class MessageOrchestrator:
         self._channel_locks: Dict[str, asyncio.Lock] = {}
         # Track the active Claude task per channel so /stop can cancel it.
         self._active_tasks: Dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
+        # Dedup cache for Slack Socket Mode retries (see class docstring).
+        self._recent_events: "OrderedDict[str, float]" = OrderedDict()
 
     def _get_channel_lock(self, channel: str) -> asyncio.Lock:
         """Get or create a per-channel lock for concurrency control."""
         if channel not in self._channel_locks:
             self._channel_locks[channel] = asyncio.Lock()
         return self._channel_locks[channel]
+
+    def _is_duplicate_event(self, event: Dict[str, Any]) -> bool:
+        """Return True if this Slack event has already been processed recently.
+
+        Slack Socket Mode uses at-least-once delivery: if the envelope ack is
+        late (e.g. a long Claude turn), Slack redelivers the same event up to
+        3 times. Without dedup, each retry re-enters the channel-lock queue
+        and produces a duplicate reply once the original handler finishes.
+
+        Dedup key priority:
+            1. ``client_msg_id`` — Slack client-generated UUID, stable across
+               retries. Present on user messages.
+            2. ``file_id`` — stable across retries for file_shared events.
+            3. ``(channel, ts)`` — always present; ``ts`` is unique per msg.
+        """
+        key = event.get("client_msg_id")
+        if not key:
+            file_id = event.get("file_id")
+            if file_id:
+                key = f"file:{file_id}"
+            else:
+                channel = event.get("channel", "") or event.get("channel_id", "")
+                ts = event.get("ts", "") or event.get("event_ts", "")
+                if not channel or not ts:
+                    return False  # Can't build a key -- process to be safe.
+                key = f"{channel}:{ts}"
+
+        now = time.time()
+
+        # Opportunistically evict expired entries from the front.
+        while self._recent_events:
+            oldest_key = next(iter(self._recent_events))
+            if now - self._recent_events[oldest_key] < self._RECENT_EVENT_CACHE_TTL:
+                break
+            self._recent_events.popitem(last=False)
+
+        if key in self._recent_events:
+            return True
+
+        self._recent_events[key] = now
+        # Cap cache size (LRU-ish: oldest inserted first).
+        while len(self._recent_events) > self._RECENT_EVENT_CACHE_MAX:
+            self._recent_events.popitem(last=False)
+        return False
 
     def _cancel_active_task(self, channel: str) -> bool:
         """Cancel the active Claude task for a channel. Returns True if a task was cancelled."""
@@ -1534,6 +1590,19 @@ class MessageOrchestrator:
         if subtype is not None and subtype != "file_share":
             return
 
+        # Drop Slack retry deliveries. Long Claude turns (Opus 4.7) sometimes
+        # miss the ~3s envelope ack window and Slack re-sends, which would
+        # otherwise queue a duplicate handler behind the channel lock and
+        # produce a duplicate reply.
+        if self._is_duplicate_event(event):
+            logger.info(
+                "Dropping duplicate Slack event (retry)",
+                client_msg_id=event.get("client_msg_id"),
+                channel=event.get("channel"),
+                ts=event.get("ts"),
+            )
+            return
+
         user_id = event.get("user", "")
         message_text = event.get("text", "")
         channel = event.get("channel", "")
@@ -1845,6 +1914,15 @@ class MessageOrchestrator:
         channel = event.get("channel_id") or event.get("channel", "")
 
         if not user_id or not file_id:
+            return
+
+        # Dedup Slack Socket Mode retry deliveries (see agentic_text for context).
+        if self._is_duplicate_event(event):
+            logger.info(
+                "Dropping duplicate file_shared event (retry)",
+                file_id=file_id,
+                channel=channel,
+            )
             return
 
         # In require_mention channels, ignore standalone file uploads
