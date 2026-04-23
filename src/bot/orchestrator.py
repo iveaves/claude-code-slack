@@ -215,7 +215,15 @@ class MessageOrchestrator:
     async def _apply_channel_routing_context(
         self, channel_id: str, context: Dict[str, Any]
     ) -> bool:
-        """Enforce strict project-channel routing and load channel-local state."""
+        """Enforce strict project-channel routing and load channel-local state.
+
+        Replaces ``context["user_state"]`` with a direct reference to the
+        per-channel sub-dict ``user_state_shared["channel_state"][channel_id]``.
+        This isolates state writes (current_directory, claude_session_id, etc.)
+        from other channels for the same user, eliminating the race where two
+        concurrent handlers for different channels clobbered each other's
+        state on flat user_state keys and caused context bleed on persist.
+        """
         manager = self.deps.get("project_channels_manager")
         if manager is None:
             return False
@@ -224,27 +232,51 @@ class MessageOrchestrator:
         if not project:
             return False
 
-        user_state = context.get("user_state", {})
-        channel_states = user_state.setdefault("channel_state", {})
-        state = channel_states.get(channel_id, {})
+        # The shared per-user dict (pre-scoping). Keep a reference so we can
+        # retrieve cross-channel bits later if ever needed, but handlers will
+        # receive the channel-scoped sub-dict as `user_state`.
+        user_state_shared = context.get("user_state", {})
+        channel_states = user_state_shared.setdefault("channel_state", {})
+        channel_state = channel_states.setdefault(channel_id, {})
 
         project_root = project.absolute_path
-        current_dir_raw = state.get("current_directory")
-        current_dir = (
-            Path(current_dir_raw).resolve() if current_dir_raw else project_root
-        )
-        if not self._is_within(current_dir, project_root) or not current_dir.is_dir():
+
+        # Sanity-clamp current_directory to project_root on entry. Previously
+        # this was stored as str in channel_states and re-wrapped to Path on
+        # each request — we preserve that convention here.
+        current_dir_raw = channel_state.get("current_directory")
+        current_dir: Path
+        if current_dir_raw:
+            try:
+                candidate = Path(str(current_dir_raw)).resolve()
+                if self._is_within(candidate, project_root) and candidate.is_dir():
+                    current_dir = candidate
+                else:
+                    current_dir = project_root
+            except (ValueError, OSError):
+                current_dir = project_root
+        else:
             current_dir = project_root
+        channel_state["current_directory"] = current_dir
 
-        # Load last_response_ts from DB if not in memory (survives restarts)
-        last_response_ts = state.get("last_response_ts")
-        if not last_response_ts:
-            repo = manager.repository
-            last_response_ts = await repo.get_last_response_ts(channel_id)
+        # Load last_response_ts from DB if not in memory (survives restarts).
+        if not channel_state.get("last_response_ts"):
+            try:
+                loaded = await manager.repository.get_last_response_ts(channel_id)
+                if loaded:
+                    channel_state["last_response_ts"] = loaded
+            except Exception as e:  # pragma: no cover -- DB hiccups shouldn't block
+                logger.warning(
+                    "Failed to load last_response_ts from DB",
+                    channel_id=channel_id,
+                    error=str(e),
+                )
 
-        user_state["current_directory"] = current_dir
-        user_state["claude_session_id"] = state.get("claude_session_id")
-        user_state["last_response_ts"] = last_response_ts
+        # Record project_slug for later persistence/debugging parity.
+        channel_state["project_slug"] = project.slug
+
+        # Swap handlers' user_state to the channel-scoped view.
+        context["user_state"] = channel_state
         context["_channel_context"] = {
             "channel_id": channel_id,
             "project_slug": project.slug,
@@ -255,30 +287,39 @@ class MessageOrchestrator:
         return True
 
     def _persist_channel_state(self, channel_id: str, context: Dict[str, Any]) -> None:
-        """Persist compatibility keys back into per-channel state."""
+        """Sanity-clamp current_directory at end of request.
+
+        After the refactor, ``context["user_state"]`` is the live per-channel
+        sub-dict, so all handler mutations have already landed there — no
+        mirror copy needed. This hook now just clamps current_directory back
+        into project_root if a handler or directory-tracking regex wrote
+        something outside it.
+        """
         channel_context = context.get("_channel_context")
         if not channel_context:
             return
 
-        user_state = context.get("user_state", {})
-        project_root = Path(channel_context["project_root"])
-        current_dir = user_state.get("current_directory", project_root)
-        if not isinstance(current_dir, Path):
-            current_dir = Path(str(current_dir))
-        current_dir = current_dir.resolve()
-        if not self._is_within(current_dir, project_root) or not current_dir.is_dir():
-            current_dir = project_root
+        channel_state = context.get("user_state")
+        if not isinstance(channel_state, dict):
+            return
 
-        channel_states = user_state.setdefault("channel_state", {})
-        prev = channel_states.get(channel_id, {})
-        channel_states[channel_id] = {
-            "current_directory": str(current_dir),
-            "claude_session_id": user_state.get("claude_session_id"),
-            "project_slug": channel_context["project_slug"],
-            "last_response_ts": user_state.get(
-                "last_response_ts", prev.get("last_response_ts")
-            ),
-        }
+        project_root = Path(channel_context["project_root"])
+        current_dir = channel_state.get("current_directory")
+        try:
+            if current_dir is None:
+                channel_state["current_directory"] = project_root
+                return
+            if not isinstance(current_dir, Path):
+                current_dir = Path(str(current_dir))
+            current_dir = current_dir.resolve()
+            if (
+                not self._is_within(current_dir, project_root)
+                or not current_dir.is_dir()
+            ):
+                current_dir = project_root
+            channel_state["current_directory"] = current_dir
+        except (ValueError, OSError):
+            channel_state["current_directory"] = project_root
 
     @staticmethod
     def _is_within(path: Path, root: Path) -> bool:
@@ -1088,29 +1129,38 @@ class MessageOrchestrator:
         This shares the channel's Claude session so the job and user
         conversation have full mutual context.
         """
-        # Resolve channel to project/working directory
-        user_state = self._get_user_state(user_id)
+        # Resolve channel to project/working directory. Operate on the live
+        # per-channel sub-dict directly so a user message arriving concurrently
+        # in a different channel cannot clobber this job's state (the bug
+        # previously caused by writing to flat user_state keys).
+        user_state_shared = self._get_user_state(user_id)
+        channel_states = user_state_shared.setdefault("channel_state", {})
+        channel_state = channel_states.setdefault(channel_id, {})
 
+        current_dir: Path = self.settings.approved_directory
         manager = self.deps.get("project_channels_manager")
         if manager:
             project = await manager.resolve_project(channel_id)
             if project:
-                channel_states = user_state.setdefault("channel_state", {})
-                state = channel_states.get(channel_id, {})
-                current_dir = state.get("current_directory")
-                if current_dir:
-                    current_dir = Path(current_dir).resolve()
-                    if not current_dir.is_dir():
-                        current_dir = project.absolute_path
+                project_root = project.absolute_path
+                raw = channel_state.get("current_directory")
+                if raw:
+                    try:
+                        candidate = Path(str(raw)).resolve()
+                        if (
+                            self._is_within(candidate, project_root)
+                            and candidate.is_dir()
+                        ):
+                            current_dir = candidate
+                        else:
+                            current_dir = project_root
+                    except (ValueError, OSError):
+                        current_dir = project_root
                 else:
-                    current_dir = project.absolute_path
-                user_state["current_directory"] = current_dir
-                user_state["claude_session_id"] = state.get("claude_session_id")
+                    current_dir = project_root
+                channel_state["current_directory"] = current_dir
 
-        current_dir = user_state.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = user_state.get("claude_session_id")
+        session_id = channel_state.get("claude_session_id")
 
         claude_integration = self.deps.get("claude_integration")
         if not claude_integration:
@@ -1149,15 +1199,9 @@ class MessageOrchestrator:
                 file_upload_callback=file_upload_cb,
             )
 
-            user_state["claude_session_id"] = claude_response.session_id
-
-            # Persist channel state
-            if manager:
-                channel_states = user_state.setdefault("channel_state", {})
-                channel_states[channel_id] = {
-                    "current_directory": str(current_dir),
-                    "claude_session_id": claude_response.session_id,
-                }
+            # Mutations on the channel-scoped sub-dict are live — no separate
+            # "persist" step needed. Just record the new session id.
+            channel_state["claude_session_id"] = claude_response.session_id
 
             from .utils.formatting import ResponseFormatter
 
@@ -1507,15 +1551,14 @@ class MessageOrchestrator:
             return  # not addressed to us
         message_text = checked
 
-        # For require_mention channels, fetch gap conversation for context
+        # For require_mention channels, fetch gap conversation for context.
+        # After channel-state scoping, context["user_state"] is the per-channel
+        # sub-dict, and _apply_channel_routing_context has already DB-loaded
+        # last_response_ts onto it — so a single direct read is sufficient.
         chan_ctx = context.get("_channel_context", {})
         if chan_ctx.get("require_mention") and not channel.startswith("D"):
             user_state_pre = context.get("user_state", {})
-            # Check flat key first (loaded from DB on restart), then nested channel state
             last_ts = user_state_pre.get("last_response_ts")
-            if not last_ts:
-                ch_state = user_state_pre.get("channel_state", {}).get(channel, {})
-                last_ts = ch_state.get("last_response_ts")
             gap = await self._fetch_gap_context(channel, last_ts, client)
             if gap:
                 message_text = gap + message_text
